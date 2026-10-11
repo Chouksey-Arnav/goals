@@ -5,7 +5,7 @@ A daily accountability tracker with one job: finish two Udemy courses by **Octob
 | Course | Instructor | Tracked from |
 |---|---|---|
 | Mathematical Foundations of Machine Learning | Jon Krohn | Lesson 77 to 114 |
-| Python for Data Science and Machine Learning Bootcamp | Jose Portilla | Lesson 16 to 98 (more pending) |
+| Python for Data Science and Machine Learning Bootcamp | Jose Portilla | Lesson 16 to 152 (some names pending) |
 
 Every lesson name is copied exactly from the Udemy sidebar.
 
@@ -31,8 +31,8 @@ Preview any date with `?today=2026-10-20`.
 
 All lessons are in [`js/data.js`](js/data.js) as `[number, "exact title", minutes, kind]`. Lessons marked `pending` exist in the sidebar but their names haven't been transcribed yet:
 
-- Portilla Section 7 (lessons 35 to 39), Section 8 (40 to 44), Section 17 (89 to 94), Section 18 (95 to 98)
-- Portilla Section 19 onward is **not loaded at all**, so the plan underestimates the real load until it is.
+- Portilla Section 7 (lessons 35 to 39), Section 8 (40 to 44), Section 25 (139 to 152, plus the length of 138)
+- Any Portilla sections after 25 are **not loaded**, so if they exist the plan underestimates the real load.
 
 ## Run locally
 

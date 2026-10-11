@@ -7,6 +7,7 @@
 //   "exercise" attempt it yourself BEFORE any solution video
 //   "project"  a bigger build; attempt fully before the solution videos
 //   "solution" watch only after you attempted the exercise/project
+//   "quiz"     short Udemy quiz (unnumbered in the sidebar)
 //   "pending"  lesson exists (count and section length are known from the
 //              sidebar) but its name was not in a screenshot yet
 //
@@ -25,6 +26,7 @@ export const EFFORT = {
   project: () => 75,
   solution: (m) => m,
   pending: (m) => Math.round(m * 1.5),
+  quiz: () => 5,
 };
 
 export const KIND_LABEL = {
@@ -34,6 +36,7 @@ export const KIND_LABEL = {
   project: "Build first",
   solution: "Check your work",
   pending: "Name pending",
+  quiz: "Quiz",
 };
 
 export const KIND_TIP = {
@@ -43,6 +46,7 @@ export const KIND_TIP = {
   project: "Open a blank notebook and build the whole thing yourself. Only then watch the solutions.",
   solution: "Compare against your attempt. Write down one thing you did differently.",
   pending: "Name not loaded yet. Send a screenshot of this section to fill it in.",
+  quiz: "Answer from memory first. Only look back at your notes for the ones you miss.",
 };
 
 export const COURSES = [
@@ -259,30 +263,120 @@ export const COURSES = [
       },
       {
         title: "Section 17: Logistic Regression",
-        note: "6 lessons, 1 hr 7 min. Names pending screenshot",
         lessons: [
-          [89, "Lesson 89", 11, "pending"],
-          [90, "Lesson 90", 11, "pending"],
-          [91, "Lesson 91", 11, "pending"],
-          [92, "Lesson 92", 11, "pending"],
-          [93, "Lesson 93", 11, "pending"],
-          [94, "Lesson 94", 12, "pending"],
+          [89, "Logistic Regression Theory", 12, "video"],
+          [90, "Logistic Regression with Python - Part 1", 18, "video"],
+          [91, "Logistic Regression with Python - Part 2", 17, "video"],
+          [92, "Logistic Regression with Python - Part 3", 8, "video"],
+          [93, "Logistic Regression Project Overview", 2, "project"],
+          [94, "Logistic Regression Project Solutions", 11, "solution"],
         ],
       },
       {
         title: "Section 18: K Nearest Neighbors",
-        note: "4 lessons, 41 min. Names pending screenshot",
         lessons: [
-          [95, "Lesson 95", 10, "pending"],
-          [96, "Lesson 96", 10, "pending"],
-          [97, "Lesson 97", 10, "pending"],
-          [98, "Lesson 98", 11, "pending"],
+          [95, "KNN Theory", 6, "video"],
+          [96, "KNN with Python", 20, "video"],
+          [97, "KNN Project Overview", 1, "project"],
+          [98, "KNN Project Solutions", 14, "solution"],
+        ],
+      },
+      {
+        title: "Section 19: Decision Trees and Random Forests",
+        lessons: [
+          [99, "Introduction to Tree Methods", 7, "video"],
+          [100, "Decision Trees and Random Forest with Python", 14, "video"],
+          [101, "Decision Trees and Random Forest Project Overview", 3, "project"],
+          [102, "Decision Trees and Random Forest Solutions Part 1", 12, "solution"],
+          [103, "Decision Trees and Random Forest Solutions Part 2", 9, "solution"],
+        ],
+      },
+      {
+        title: "Section 20: Support Vector Machines",
+        lessons: [
+          [104, "SVM Theory", 5, "video"],
+          [105, "Support Vector Machines with Python", 18, "video"],
+          [106, "SVM Project Overview", 2, "project"],
+          [107, "SVM Project Solutions", 10, "solution"],
+        ],
+      },
+      {
+        title: "Section 21: K Means Clustering",
+        lessons: [
+          [108, "K Means Algorithm Theory", 5, "video"],
+          [109, "K Means with Python", 13, "video"],
+          [110, "K Means Project Overview", 3, "project"],
+          [111, "K Means Project Solutions", 17, "solution"],
+        ],
+      },
+      {
+        title: "Section 22: Principal Component Analysis",
+        lessons: [
+          [112, "Principal Component Analysis", 3, "video"],
+          [113, "PCA with Python", 17, "video"],
+        ],
+      },
+      {
+        title: "Section 23: Recommender Systems",
+        lessons: [
+          [114, "Recommender Systems", 4, "video"],
+          [115, "Recommender Systems with Python - Part 1", 14, "video"],
+          [116, "Recommender Systems with Python - Part 2", 13, "video"],
+        ],
+      },
+      {
+        title: "Section 24: Natural Language Processing",
+        lessons: [
+          [117, "Natural Language Processing Theory", 5, "video"],
+          [118, "NLP with Python - Part 1", 16, "video"],
+          [119, "NLP with Python - Part 2", 19, "video"],
+          [120, "NLP with Python - Part 3", 18, "video"],
+          [121, "NLP Project Overview", 2, "project"],
+          [122, "NLP Project Solutions", 19, "solution"],
+        ],
+      },
+      {
+        title: "Section 25: Neural Nets and Deep Learning",
+        note: "31 items, 5 hr 2 min. Lesson 138's length and lessons 139 to 152 pending screenshot",
+        lessons: [
+          [123, "Download TensorFlow Notebooks Here", 1, "article"],
+          ["Quiz 1", "Quick Check for Notes", 2, "quiz"],
+          [124, "Welcome to the Deep Learning Section!", 1, "video"],
+          [125, "Introduction to Artificial Neural Networks (ANN)", 2, "video"],
+          [126, "Installing Tensorflow", 1, "article"],
+          [127, "Perceptron Model", 11, "video"],
+          [128, "Neural Networks", 7, "video"],
+          [129, "Activation Functions", 11, "video"],
+          [130, "Multi-Class Classification Considerations", 11, "video"],
+          [131, "Cost Functions and Gradient Descent", 18, "video"],
+          [132, "Backpropagation", 15, "video"],
+          [133, "TensorFlow vs Keras", 2, "video"],
+          [134, "TF Syntax Basics - Part One - Preparing the Data", 11, "video"],
+          [135, "TF Syntax Basics - Part Two - Creating and Training the Model", 14, "video"],
+          [136, "TF Syntax Basics - Part Three - Model Evaluation", 13, "video"],
+          [137, "TF Regression Code Along - Exploratory Data Analysis", 19, "video"],
+          // Length cut off in the screenshot: estimated from the section total.
+          [138, "TF Regression Code Along - Exploratory Data Analysis - Continued", 11, "video"],
+          [139, "Lesson 139", 11, "pending"],
+          [140, "Lesson 140", 11, "pending"],
+          [141, "Lesson 141", 11, "pending"],
+          [142, "Lesson 142", 11, "pending"],
+          [143, "Lesson 143", 11, "pending"],
+          [144, "Lesson 144", 11, "pending"],
+          [145, "Lesson 145", 11, "pending"],
+          [146, "Lesson 146", 11, "pending"],
+          [147, "Lesson 147", 11, "pending"],
+          [148, "Lesson 148", 11, "pending"],
+          [149, "Lesson 149", 11, "pending"],
+          [150, "Lesson 150", 11, "pending"],
+          [151, "Lesson 151", 11, "pending"],
+          [152, "Lesson 152", 11, "pending"],
         ],
       },
     ],
     // Sections known to exist but with no lesson data yet. The plan cannot
     // schedule what it cannot see, so the UI warns that the real load is higher.
-    notLoaded: ["Section 19: Decision Trees and Random Forests", "Every section after 19"],
+    notLoaded: ["Any sections after 25"],
   },
 ];
 
@@ -293,9 +387,10 @@ export function allLessons(courses = COURSES) {
     c.sections.forEach((s, si) => {
       for (const [n, title, min, kind] of s.lessons) {
         out.push({
-          id: `${c.id}-${n}`,
+          id: `${c.id}-${String(n).toLowerCase().replace(/\s+/g, "")}`,
           course: c.id,
           n,
+          label: typeof n === "number" ? `Lesson ${n}` : n,
           title,
           min,
           kind,

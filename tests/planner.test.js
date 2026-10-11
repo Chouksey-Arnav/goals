@@ -18,7 +18,7 @@ test("data: ids unique, every lesson has a known kind and positive minutes", () 
 
 test("data: lesson numbers are contiguous within each course", () => {
   for (const c of COURSES) {
-    const ns = L.filter((l) => l.course === c.id).map((l) => l.n);
+    const ns = L.filter((l) => l.course === c.id && typeof l.n === "number").map((l) => l.n);
     ns.forEach((n, i) => i && assert.equal(n, ns[i - 1] + 1, `${c.id} gap before ${n}`));
   }
 });
@@ -34,6 +34,23 @@ test("data: section totals match the Udemy sidebar", () => {
   near(secMin("portilla", "Section 9:"), 82);
   near(secMin("portilla", "Section 13:"), 79);
   near(secMin("portilla", "Section 15:"), 52);
+  near(secMin("portilla", "Section 17:"), 67);
+  near(secMin("portilla", "Section 18:"), 41);
+  near(secMin("portilla", "Section 19:"), 45);
+  near(secMin("portilla", "Section 20:"), 35);
+  near(secMin("portilla", "Section 21:"), 37);
+  near(secMin("portilla", "Section 22:"), 20);
+  near(secMin("portilla", "Section 23:"), 31);
+  near(secMin("portilla", "Section 24:"), 79);
+  near(secMin("portilla", "Section 25:"), 302);
+});
+
+test("data: section item counts match the sidebar", () => {
+  const count = (title) => L.filter((l) => l.course === "portilla" && l.section.startsWith(title)).length;
+  assert.equal(count("Section 19:"), 5);
+  assert.equal(count("Section 24:"), 6);
+  assert.equal(count("Section 25:"), 31);
+  assert.ok(L.find((l) => l.id === "portilla-quiz1"), "unnumbered quiz gets a stable id");
 });
 
 test("dates: addDays crosses months and DST safely", () => {

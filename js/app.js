@@ -94,10 +94,10 @@ function lessonRow(l, { current = false, showCourse = false } = {}) {
   return `
     <button class="lesson ${done ? "done" : ""} ${current ? "current" : ""} ${l.kind === "pending" ? "pending" : ""}"
       data-action="toggle" data-id="${l.id}" aria-pressed="${done}"
-      aria-label="${done ? "Mark not done" : "Mark done"}: lesson ${l.n}, ${esc(l.title)}">
+      aria-label="${done ? "Mark not done" : "Mark done"}: ${esc(l.label)}, ${esc(l.title)}">
       <span class="box">${CHECK_SVG}</span>
       <span>
-        <span class="ln">${showCourse ? esc(c.short) + " · " : ""}Lesson ${l.n}</span>
+        <span class="ln">${showCourse ? esc(c.short) + " · " : ""}${esc(l.label)}</span>
         <span class="lt" style="display:block">${esc(l.title)}</span>
         ${showKind ? `<span class="tags">${kindChip(l.kind)}</span>` : ""}
       </span>
@@ -199,7 +199,7 @@ function viewToday() {
       <section class="card next" aria-label="Up next">
         <div class="eyebrow">Up next · do exactly this</div>
         <div class="title">${esc(next.title)}</div>
-        <div class="meta">${courseChip(c)}<span>Lesson ${next.n}</span>${kindChip(next.kind)}</div>
+        <div class="meta">${courseChip(c)}<span>${esc(next.label)}</span>${kindChip(next.kind)}</div>
         <div class="meta" style="margin-top:6px"><span>${esc(next.section)}</span></div>
         <div class="meta" style="margin-top:6px"><span>▶ ${next.min} min video</span><span>⏱ about ${fmtMin(next.effort)} real work</span></div>
         <p class="tip">${esc(KIND_TIP[next.kind])}</p>
@@ -322,6 +322,16 @@ function heatmapCard(byDay, t) {
     </section>`;
 }
 
+// Sections you expanded or collapsed by hand stay that way across re-renders.
+const sectionOpen = {};
+document.addEventListener(
+  "toggle",
+  (e) => {
+    if (e.target.matches?.("details.section")) sectionOpen[e.target.dataset.key] = e.target.open;
+  },
+  true
+);
+
 function viewCourses() {
   const nextIds = new Set(COURSES.map((c) => LESSONS.find((l) => l.course === c.id && !isDone(l))?.id));
   const cards = COURSES.map((c) => {
@@ -330,9 +340,10 @@ function viewCourses() {
       .map((sec, si) => {
         const ls = LESSONS.filter((l) => l.course === c.id && l.sectionIndex === si);
         const d = ls.filter(isDone).length;
-        const open = ls.some((l) => nextIds.has(l.id));
+        const key = `${c.id}-${si}`;
+        const open = key in sectionOpen ? sectionOpen[key] : ls.some((l) => nextIds.has(l.id));
         const sp = Math.round((d / ls.length) * 100);
-        return `<details class="section" ${open ? "open" : ""}>
+        return `<details class="section" data-key="${key}" ${open ? "open" : ""}>
           <summary><span class="st">${esc(sec.title)}</span><span class="sc">${d}/${ls.length} ${d === ls.length ? "✓" : ""}</span>
             <span class="strack"><div class="fill-${c.color}" style="width:${sp}%"></div></span></summary>
           ${sec.note ? `<div class="note" style="margin-bottom:8px">${esc(sec.note)}</div>` : ""}
