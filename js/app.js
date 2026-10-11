@@ -1,5 +1,6 @@
-import { COURSES, allLessons, DEADLINE, TRACK_START, KIND_LABEL, KIND_TIP } from "./data.js";
+import { COURSES, allLessons, plannable, DEADLINE, TRACK_START, KIND_LABEL, KIND_TIP } from "./data.js";
 import * as P from "./planner.js";
+import * as Sync from "./sync.js";
 
 // ---------- state
 
@@ -13,6 +14,7 @@ const DEFAULT_SETTINGS = {
   weekendMin: 240,
   deadline: DEADLINE,
   bufferDays: 2,
+  includeOptional: false,
   when: "7:00 pm",
   where: "my desk",
   identity: "I am someone who understands machine learning from first principles.",
@@ -45,16 +47,23 @@ function load() {
   }
   return fresh();
 }
-function save() {
+// touch = a user action. Only those bump updatedAt and sync, so merely
+// opening the app on a new device never outranks the synced copy.
+function save(touch = true) {
+  if (touch) state.updatedAt = Date.now();
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
     storageOk = true;
   } catch {
     storageOk = false;
   }
+  if (touch) Sync.schedulePush();
 }
 
 let state = load();
+
+// Lessons the plan schedules under the current settings.
+const planSet = () => plannable(LESSONS, state.settings.includeOptional);
 
 // ?today=YYYY-MM-DD lets you preview any day without touching the clock.
 const params = new URLSearchParams(location.search);
@@ -87,26 +96,31 @@ function kindChip(kind) {
   return `<span class="chip k-${kind}">${esc(KIND_LABEL[kind])}</span>`;
 }
 
-function lessonRow(l, { current = false, showCourse = false } = {}) {
+function lessonRow(l, { current = false, showCourse = false, showReason = false } = {}) {
   const c = COURSE[l.course];
   const done = isDone(l);
-  const showKind = l.kind !== "video";
+  const tags = [
+    l.kind !== "video" ? kindChip(l.kind) : "",
+    l.optional ? `<span class="chip k-optional" title="${esc(l.optional)}">Optional</span>` : "",
+  ].join("");
   return `
-    <button class="lesson ${done ? "done" : ""} ${current ? "current" : ""} ${l.kind === "pending" ? "pending" : ""}"
+    <button class="lesson ${done ? "done" : ""} ${current ? "current" : ""} ${l.kind === "pending" ? "pending" : ""} ${l.optional ? "optional" : ""}"
       data-action="toggle" data-id="${l.id}" aria-pressed="${done}"
       aria-label="${done ? "Mark not done" : "Mark done"}: ${esc(l.label)}, ${esc(l.title)}">
       <span class="box">${CHECK_SVG}</span>
       <span>
         <span class="ln">${showCourse ? esc(c.short) + " · " : ""}${esc(l.label)}</span>
         <span class="lt" style="display:block">${esc(l.title)}</span>
-        ${showKind ? `<span class="tags">${kindChip(l.kind)}</span>` : ""}
+        ${tags ? `<span class="tags">${tags}</span>` : ""}
+        ${showReason && l.optional ? `<span class="reason">${esc(l.optional)}</span>` : ""}
       </span>
       <span class="lm"><b>~${fmtMin(l.effort)}</b>${l.min} min video</span>
     </button>`;
 }
 
+// Progress counts the lessons in the plan (optional ones excluded by default).
 function courseProgress(courseId) {
-  const ls = LESSONS.filter((l) => l.course === courseId);
+  const ls = planSet().filter((l) => l.course === courseId);
   const done = ls.filter(isDone);
   return {
     total: ls.length,
@@ -125,10 +139,10 @@ function activity() {
 function viewToday() {
   const t = today();
   const s = state.settings;
-  const plan = P.planDay({ lessons: LESSONS, completed: state.completed, today: t, settings: s });
+  const plan = P.planDay({ lessons: planSet(), completed: state.completed, today: t, settings: s });
   if (state.history[t] !== plan.targetMin) {
     state.history[t] = plan.targetMin;
-    save();
+    save(false);
   }
 
   const planLessons = plan.ids.map((id) => BY_ID[id]);
@@ -159,7 +173,7 @@ function viewToday() {
   let sub;
   if (finished) {
     headline = "Both courses complete.";
-    sub = "Every lesson loaded so far is done. Send the next screenshots to load more.";
+    sub = "Every planned lesson is done. Now the real olympiad work starts: see the roadmap on the System tab.";
   } else if (allDone) {
     headline = "Day complete. Chain unbroken.";
     sub = "That was a vote for who you're becoming. Bank extra lessons below to lighten tomorrow.";
@@ -226,7 +240,7 @@ function viewToday() {
     })
     .join("");
 
-  const ahead = P.aheadLessons({ lessons: LESSONS, completed: state.completed, planIds: plan.ids });
+  const ahead = P.aheadLessons({ lessons: planSet(), completed: state.completed, planIds: plan.ids });
   const aheadCard =
     allDone && ahead.length
       ? `<section class="card"><h2>Get ahead <span class="right">lightens tomorrow</span></h2>
@@ -333,7 +347,7 @@ document.addEventListener(
 );
 
 function viewCourses() {
-  const nextIds = new Set(COURSES.map((c) => LESSONS.find((l) => l.course === c.id && !isDone(l))?.id));
+  const nextIds = new Set(COURSES.map((c) => planSet().find((l) => l.course === c.id && !isDone(l))?.id));
   const cards = COURSES.map((c) => {
     const p = courseProgress(c.id);
     const sections = c.sections
@@ -343,11 +357,14 @@ function viewCourses() {
         const key = `${c.id}-${si}`;
         const open = key in sectionOpen ? sectionOpen[key] : ls.some((l) => nextIds.has(l.id));
         const sp = Math.round((d / ls.length) * 100);
-        return `<details class="section" data-key="${key}" ${open ? "open" : ""}>
-          <summary><span class="st">${esc(sec.title)}</span><span class="sc">${d}/${ls.length} ${d === ls.length ? "✓" : ""}</span>
+        return `<details class="section ${sec.optional ? "optional" : ""}" data-key="${key}" ${open ? "open" : ""}>
+          <summary><span class="st">${esc(sec.title)}${sec.optional ? ` <span class="chip k-optional">Optional</span>` : ""}</span><span class="sc">${d}/${ls.length} ${d === ls.length ? "✓" : ""}</span>
             <span class="strack"><div class="fill-${c.color}" style="width:${sp}%"></div></span></summary>
           ${sec.note ? `<div class="note" style="margin-bottom:8px">${esc(sec.note)}</div>` : ""}
-          <div class="lessons">${ls.map((l) => lessonRow(l, { current: nextIds.has(l.id) })).join("")}</div>
+          ${sec.optional ? `<div class="reason" style="margin:0 0 8px">Optional, not in your plan: ${esc(sec.optional)}</div>` : ""}
+          <div class="lessons">${ls
+            .map((l, i) => lessonRow(l, { current: nextIds.has(l.id), showReason: !sec.optional && l.optional !== ls[i - 1]?.optional }))
+            .join("")}</div>
         </details>`;
       })
       .join("");
@@ -358,7 +375,7 @@ function viewCourses() {
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
         <div><div style="font-family:var(--display);font-weight:700;font-size:19px;line-height:1.2">${esc(c.title)}</div>
         <div class="small muted">${esc(c.instructor)} · ${esc(c.platform)}</div></div>${courseChip(c)}</div>
-      <div class="pbar"><div class="pbar-top"><span>${p.pct}% of real work</span><span>${p.done}/${p.total} lessons</span></div>
+      <div class="pbar"><div class="pbar-top"><span>${p.pct}% of planned work</span><span>${p.done}/${p.total} planned lessons</span></div>
         <div class="track"><div class="fill-${c.color}" style="width:${p.pct}%"></div></div></div>
       <div style="margin-top:8px">${sections}</div>${nl}
     </section>`;
@@ -366,6 +383,43 @@ function viewCourses() {
   return `<div class="view">
     <div class="banner good"><span class="bi">💡</span><div>Tick anything here, in any order. Today's plan re-balances tomorrow around whatever is left.</div></div>
     ${cards}</div>`;
+}
+
+// Sources: IOAI 2026 official syllabus (ioai-official.org) and usaaio.org.
+const ROUND1 = "2027-02-19";
+const REG_CLOSE = "2027-01-31";
+const COVERED = [
+  "NumPy, Pandas, Matplotlib, Seaborn, scikit-learn",
+  "Linear and logistic regression, KNN, decision trees, random forests, SVM",
+  "K-means, PCA",
+  "Metrics, confusion matrix, ROC, cross validation, over/underfitting",
+  "Perceptron, activation and loss functions, gradient descent, backprop",
+  "Calculus and probability behind all of it (Krohn)",
+];
+const GAPS = [
+  "PyTorch. The syllabus lists PyTorch basics and tensor manipulation; Portilla teaches TensorFlow/Keras",
+  "CNNs and computer vision (convolutions, pooling, ResNet, augmentation)",
+  "Attention, transformers, embeddings, BERT-style pre-trained models",
+  "L1/L2 regularization, gradient boosting, t-SNE, UMAP, DBSCAN",
+  "Training craft: Adam, batch norm, weight init, fine-tuning",
+];
+
+function olympiadCard() {
+  const t = today();
+  const toRound1 = P.diffDays(t, ROUND1);
+  const toReg = P.diffDays(t, REG_CLOSE);
+  return `<section class="card">
+    <h2>Olympiad roadmap <span class="right">USAAIO 2027</span></h2>
+    <div class="pace">
+      <div class="box2"><div class="big">${toReg > 0 ? toReg : 0} days</div><div class="lbl">until registration closes (${fmtDate(REG_CLOSE, { month: "short", day: "numeric", year: "numeric" })})</div></div>
+      <div class="box2"><div class="big">${toRound1 > 0 ? toRound1 : 0} days</div><div class="lbl">until Round 1 (${fmtDate(ROUND1, { month: "short", day: "numeric", year: "numeric" })})</div></div>
+    </div>
+    <p class="small" style="margin:14px 0 6px"><b>These two courses cover</b> (checked against the official IOAI 2026 syllabus):</p>
+    <ul class="ticks good">${COVERED.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+    <p class="small" style="margin:12px 0 6px"><b>They do not cover</b> (this is your Nov to Feb work):</p>
+    <ul class="ticks bad">${GAPS.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+    <p class="small muted" style="margin:12px 0 0">So Oct 31 is the end of the foundation, not the end of prep. Lessons off the syllabus (Plotly, maps, recommender systems, Spark, the finance project, Tensorboard) are marked optional and left out of your plan.</p>
+  </section>`;
 }
 
 function viewSystem() {
@@ -376,6 +430,8 @@ function viewSystem() {
       <blockquote>You do not rise to the level of your goals. You fall to the level of your systems.<cite>James Clear, Atomic Habits</cite></blockquote>
       <p class="small muted" style="margin:12px 0 0">The goal is "finish by Oct 31." This page is the system. The checklist only works if the system around it does.</p>
     </section>
+
+    ${olympiadCard()}
 
     <section class="card">
       <h2>Identity <span class="right">${votes} votes so far</span></h2>
@@ -434,6 +490,8 @@ function viewSettings() {
         <div class="field"><label for="deadline">Deadline</label><input id="deadline" data-setting="deadline" type="date" value="${s.deadline}"/></div>
         <div class="field"><label for="bufferDays">Buffer days</label><input id="bufferDays" data-setting="bufferDays" type="number" min="0" max="10" value="${s.bufferDays}"/><span class="hint">Plan to finish this many days early.</span></div>
       </div>
+      <label class="toggle"><input type="checkbox" data-setting="includeOptional" ${s.includeOptional ? "checked" : ""}/>
+        <span><b>Include optional lessons in my plan</b><br/><span class="small muted">Off by default: they're off the olympiad syllabus. AWS setup is never planned.</span></span></label>
       <p class="small faint" style="margin:12px 0 0">Real work per lesson is estimated: video × 1.5 for code-along, at least 20 min for exercises, 75 min for projects. Video time is not study time.</p>
     </section>
 
@@ -449,9 +507,11 @@ function viewSettings() {
       <div class="field" style="margin-top:12px"><label for="ritual">Motivation ritual (one step per line)</label><textarea id="ritual" data-setting="ritual">${esc(s.ritual.join("\n"))}</textarea></div>
     </section>
 
+    ${syncCard()}
+
     <section class="card">
-      <h2>Your data</h2>
-      <p class="small muted" style="margin:0 0 12px">Progress is saved in <b>this browser on this device</b>. ${storageOk ? "" : "<b style='color:var(--bad)'>Storage is blocked here (private mode?), so progress will not survive a reload.</b>"} Switching devices? Export here, import there.</p>
+      <h2>Backup</h2>
+      <p class="small muted" style="margin:0 0 12px">Progress is always saved in this browser first. ${storageOk ? "" : "<b style='color:var(--bad)'>Storage is blocked here (private mode?), so progress will not survive a reload.</b>"} A backup file is your safety net either way.</p>
       <div class="btn-row">
         <button class="btn ghost" data-action="export">Export backup</button>
         <label class="btn ghost" for="importFile" style="cursor:pointer">Import backup</label>
@@ -460,6 +520,26 @@ function viewSettings() {
       </div>
     </section>
   </div>`;
+}
+
+function syncCard() {
+  const st = Sync.status;
+  let body;
+  if (!st.enabled) {
+    body = `<p class="small muted" style="margin:0">Cloud sync is not connected yet. Until it is, progress lives only in this browser.</p>`;
+  } else if (!st.ready && !st.error) {
+    body = `<p class="small muted" style="margin:0">Connecting…</p>`;
+  } else if (!st.email) {
+    body = `<p class="small muted" style="margin:0 0 12px">Sign in with your email to keep your phone and laptop in sync. You'll get a one-time login link, no password.</p>
+      <div class="field"><label for="syncEmail">Email</label><input id="syncEmail" type="email" autocomplete="email" placeholder="you@example.com"/></div>
+      <button class="btn primary block" data-action="signin">Email me a login link</button>`;
+  } else {
+    const when = st.lastSync ? st.lastSync.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "not yet";
+    body = `<p class="small" style="margin:0 0 12px"><span class="dot ${st.error ? "bad" : "good"}"></span> Synced as <b>${esc(st.email)}</b> · last sync ${when}</p>
+      <div class="btn-row"><button class="btn ghost" data-action="syncnow">Sync now</button><button class="btn ghost" data-action="signout">Sign out</button></div>`;
+  }
+  return `<section class="card"><h2>Sync across devices <span class="right">${st.enabled ? "Supabase" : "off"}</span></h2>
+    ${st.error ? `<div class="banner bad" style="margin-bottom:12px"><span class="bi">⚠️</span><div>${esc(st.error)}</div></div>` : ""}${body}</section>`;
 }
 
 // ---------- render loop
@@ -539,7 +619,7 @@ function toggle(id, el) {
 }
 
 function dayComplete(t) {
-  const plan = P.planDay({ lessons: LESSONS, completed: state.completed, today: t, settings: state.settings });
+  const plan = P.planDay({ lessons: planSet(), completed: state.completed, today: t, settings: state.settings });
   return plan.ids.length > 0 && plan.ids.every((id) => state.completed[id]);
 }
 
@@ -554,6 +634,16 @@ document.addEventListener("click", (e) => {
   const act = a.dataset.action;
   if (act === "toggle") toggle(a.dataset.id, a);
   else if (act === "export") exportData();
+  else if (act === "signin") {
+    const email = ($("#syncEmail")?.value || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Enter a valid email.");
+    a.disabled = true;
+    Sync.signIn(email).then(({ error }) => {
+      a.disabled = false;
+      toast(error ? `Couldn't send: ${error}` : "Check your email and tap the login link on this device.");
+    });
+  } else if (act === "signout") Sync.signOut().then(() => toast("Signed out. Progress stays on this device."));
+  else if (act === "syncnow") Sync.reconcile().then(() => toast(Sync.status.error || "Synced."));
   else if (act === "reset") {
     if (confirm("Erase all progress, streaks and settings on this device? Export a backup first if unsure.")) {
       state = fresh();
@@ -583,7 +673,9 @@ document.addEventListener("change", (e) => {
   const key = el.dataset.setting;
   if (!key) return;
   const s = state.settings;
-  if (["weekdayMin", "weekendMin", "bufferDays"].includes(key)) {
+  if (key === "includeOptional") {
+    s.includeOptional = el.checked;
+  } else if (["weekdayMin", "weekendMin", "bufferDays"].includes(key)) {
     const v = Math.max(0, Math.round(Number(el.value) || 0));
     s[key] = key === "bufferDays" ? Math.min(v, 10) : Math.min(v, 900);
   } else if (key === "deadline") {
@@ -706,3 +798,14 @@ document.addEventListener("visibilitychange", () => document.visibilityState ===
 addEventListener("storage", (e) => e.key === KEY && ((state = load()), render()));
 
 render();
+
+Sync.initSync({
+  getState: () => state,
+  setState: (remote) => {
+    state = normalize(remote);
+    save(false);
+    toast("Pulled your latest progress from the cloud.");
+    render();
+  },
+  onStatus: () => currentTab() === "settings" && !document.activeElement?.matches?.("input, textarea") && render(),
+});

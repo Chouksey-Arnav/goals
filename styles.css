@@ -324,7 +324,7 @@ blockquote cite { display: block; font-style: normal; font-size: 12px; color: va
 }
 .field textarea { min-height: 84px; resize: vertical; }
 .field .hint { font-size: 12px; color: var(--faint); }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
 .grid2 .field { margin-top: 12px; }
 
 /* ---------- toast + confetti */
@@ -346,3 +346,19 @@ blockquote cite { display: block; font-style: normal; font-size: 12px; color: va
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- optional lessons, toggles, sync, roadmap */
+.chip.k-optional { background: var(--bg-2); color: var(--faint); border: 1px dashed var(--line-2); }
+.lesson.optional:not(.done) { opacity: 0.72; }
+details.section.optional > summary .st { color: var(--muted); }
+.reason { display: block; font-size: 12px; color: var(--faint); margin-top: 4px; line-height: 1.4; }
+.toggle { display: flex; gap: 12px; align-items: flex-start; margin-top: 14px; padding: 12px; border-radius: 12px; background: var(--bg-2); cursor: pointer; }
+.toggle input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); flex: none; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.dot.good { background: var(--good); }
+.dot.bad { background: var(--bad); }
+.ticks { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; }
+.ticks li { position: relative; padding-left: 24px; }
+.ticks li::before { position: absolute; left: 0; top: 0; font-weight: 800; }
+.ticks.good li::before { content: "✓"; color: var(--good); }
+.ticks.bad li::before { content: "✗"; color: var(--bad); }

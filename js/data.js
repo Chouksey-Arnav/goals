@@ -8,6 +8,7 @@
 //   "project"  a bigger build; attempt fully before the solution videos
 //   "solution" watch only after you attempted the exercise/project
 //   "quiz"     short Udemy quiz (unnumbered in the sidebar)
+//   "watch"    watch for the idea only, no setup or code along
 //   "pending"  lesson exists (count and section length are known from the
 //              sidebar) but its name was not in a screenshot yet
 //
@@ -27,6 +28,7 @@ export const EFFORT = {
   solution: (m) => m,
   pending: (m) => Math.round(m * 1.5),
   quiz: () => 5,
+  watch: (m) => m,
 };
 
 export const KIND_LABEL = {
@@ -37,6 +39,7 @@ export const KIND_LABEL = {
   solution: "Check your work",
   pending: "Name pending",
   quiz: "Quiz",
+  watch: "Watch only",
 };
 
 export const KIND_TIP = {
@@ -47,6 +50,7 @@ export const KIND_TIP = {
   solution: "Compare against your attempt. Write down one thing you did differently.",
   pending: "Name not loaded yet. Send a screenshot of this section to fill it in.",
   quiz: "Answer from memory first. Only look back at your notes for the ones you miss.",
+  watch: "Watch for the big idea. No need to set anything up or code along.",
 };
 
 export const COURSES = [
@@ -205,6 +209,7 @@ export const COURSES = [
       },
       {
         title: "Section 11: Python for Data Visualization - Plotly and Cufflinks",
+        optional: "Not on the IOAI syllabus, and Cufflinks is unmaintained and often breaks installs.",
         lessons: [
           [59, "Introduction to Plotly and Cufflinks", 3, "video"],
           [60, "READ ME FIRST BEFORE PLOTLY PLEASE!", 1, "article"],
@@ -213,6 +218,7 @@ export const COURSES = [
       },
       {
         title: "Section 12: Python for Data Visualization - Geographical Plotting",
+        optional: "Not on the IOAI syllabus.",
         lessons: [
           [62, "Introduction to Geographical Plotting", 1, "video"],
           [63, "Choropleth Maps - Part 1 - USA", 19, "video"],
@@ -228,11 +234,11 @@ export const COURSES = [
           [68, "911 Calls Project Overview", 2, "project"],
           [69, "911 Calls Solutions - Part 1", 14, "solution"],
           [70, "911 Calls Solutions - Part 2", 18, "solution"],
-          [71, "Bank Data", 1, "article"],
-          [72, "Finance Data Project Overview", 3, "project"],
-          [73, "Finance Project - Solutions Part 1", 16, "solution"],
-          [74, "Finance Project - Solutions Part 2", 18, "solution"],
-          [75, "Finance Project - Solutions Part 3", 6, "solution"],
+          [71, "Bank Data", 1, "article", { optional: "The 911 Calls project already drills pandas; the finance project depends on stock-data downloads that often break." }],
+          [72, "Finance Data Project Overview", 3, "project", { optional: "The 911 Calls project already drills pandas; the finance project depends on stock-data downloads that often break." }],
+          [73, "Finance Project - Solutions Part 1", 16, "solution", { optional: "The 911 Calls project already drills pandas; the finance project depends on stock-data downloads that often break." }],
+          [74, "Finance Project - Solutions Part 2", 18, "solution", { optional: "The 911 Calls project already drills pandas; the finance project depends on stock-data downloads that often break." }],
+          [75, "Finance Project - Solutions Part 3", 6, "solution", { optional: "The 911 Calls project already drills pandas; the finance project depends on stock-data downloads that often break." }],
         ],
       },
       {
@@ -318,6 +324,7 @@ export const COURSES = [
       },
       {
         title: "Section 23: Recommender Systems",
+        optional: "Not on the IOAI syllabus.",
         lessons: [
           [114, "Recommender Systems", 4, "video"],
           [115, "Recommender Systems with Python - Part 1", 14, "video"],
@@ -337,7 +344,6 @@ export const COURSES = [
       },
       {
         title: "Section 25: Neural Nets and Deep Learning",
-        note: "31 items, 5 hr 2 min. Lesson 138's length and lessons 139 to 152 pending screenshot",
         lessons: [
           [123, "Download TensorFlow Notebooks Here", 1, "article"],
           ["Quiz 1", "Quick Check for Notes", 2, "quiz"],
@@ -355,28 +361,50 @@ export const COURSES = [
           [135, "TF Syntax Basics - Part Two - Creating and Training the Model", 14, "video"],
           [136, "TF Syntax Basics - Part Three - Model Evaluation", 13, "video"],
           [137, "TF Regression Code Along - Exploratory Data Analysis", 19, "video"],
-          // Length cut off in the screenshot: estimated from the section total.
-          [138, "TF Regression Code Along - Exploratory Data Analysis - Continued", 11, "video"],
-          [139, "Lesson 139", 11, "pending"],
-          [140, "Lesson 140", 11, "pending"],
-          [141, "Lesson 141", 11, "pending"],
-          [142, "Lesson 142", 11, "pending"],
-          [143, "Lesson 143", 11, "pending"],
-          [144, "Lesson 144", 11, "pending"],
-          [145, "Lesson 145", 11, "pending"],
-          [146, "Lesson 146", 11, "pending"],
-          [147, "Lesson 147", 11, "pending"],
-          [148, "Lesson 148", 11, "pending"],
-          [149, "Lesson 149", 11, "pending"],
-          [150, "Lesson 150", 11, "pending"],
-          [151, "Lesson 151", 11, "pending"],
-          [152, "Lesson 152", 11, "pending"],
+          [138, "TF Regression Code Along - Exploratory Data Analysis - Continued", 13, "video"],
+          [139, "TF Regression Code Along - Data Preprocessing and Creating a Model", 9, "video"],
+          [140, "TF Regression Code Along - Model Evaluation and Predictions", 11, "video"],
+          [141, "TF Classification Code Along - EDA and Preprocessing", 8, "video"],
+          [142, "TF Classification - Dealing with Overfitting and Evaluation", 17, "video"],
+          [143, "TensorFlow 2.0 Project Options Overview", 2, "video"],
+          [144, "TensorFlow 2.0 Project Notebook Overview", 8, "project"],
+          [145, "Keras Project Solutions - Dealing with Missing Data", 21, "solution"],
+          [146, "Keras Project Solutions - Dealing with Missing Data - Part Two", 15, "solution"],
+          [147, "Keras Project Solutions - Categorical Data", 12, "solution"],
+          [148, "Keras Project Solutions - Data PreProcessing", 17, "solution"],
+          [149, "Keras Project Solutions - Data PreProcessing", 4, "solution"],
+          [150, "Keras Project Solutions - Creating and Training a Model", 4, "solution"],
+          [151, "Keras Project Solutions - Model Evaluation", 10, "solution"],
+          [152, "Tensorboard", 18, "video", { optional: "TensorFlow-only tooling. The olympiad expects PyTorch." }],
         ],
+      },
+      {
+        title: "Section 26: Big Data and Spark with Python",
+        optional: "Spark and big data are not on the IOAI syllabus. Watch only if you have spare time.",
+        lessons: [
+          [153, "Welcome to the Big Data Section!", 1, "watch"],
+          [154, "Big Data Overview", 6, "watch"],
+          [155, "Spark Overview", 9, "watch"],
+          [156, "Local Spark Set-Up", 1, "watch"],
+          [157, "AWS Account Set-Up", 4, "watch", { optional: "Needs an AWS account and a credit card. Never in the plan.", hard: true }],
+          [158, "Quick Note on AWS Security", 1, "watch", { optional: "Needs an AWS account and a credit card. Never in the plan.", hard: true }],
+          [159, "EC2 Instance Set-Up", 16, "watch", { optional: "Needs an AWS account and a credit card. Never in the plan.", hard: true }],
+          [160, "SSH with Mac or Linux", 5, "watch", { optional: "Needs an AWS account and a credit card. Never in the plan.", hard: true }],
+          [161, "PySpark Setup", 24, "watch", { optional: "Needs an AWS account and a credit card. Never in the plan.", hard: true }],
+          [162, "Lambda Expressions Review", 5, "watch"],
+          [163, "Introduction to Spark and Python", 8, "watch"],
+          [164, "RDD Transformations and Actions", 23, "watch"],
+        ],
+      },
+      {
+        title: "Section 27: BONUS SECTION: THANK YOU!",
+        optional: "Promo lecture, no content.",
+        lessons: [[165, "Bonus Lecture", 1, "video"]],
       },
     ],
     // Sections known to exist but with no lesson data yet. The plan cannot
     // schedule what it cannot see, so the UI warns that the real load is higher.
-    notLoaded: ["Any sections after 25"],
+    notLoaded: [],
   },
 ];
 
@@ -385,7 +413,7 @@ export function allLessons(courses = COURSES) {
   const out = [];
   for (const c of courses) {
     c.sections.forEach((s, si) => {
-      for (const [n, title, min, kind] of s.lessons) {
+      for (const [n, title, min, kind, opts = {}] of s.lessons) {
         out.push({
           id: `${c.id}-${String(n).toLowerCase().replace(/\s+/g, "")}`,
           course: c.id,
@@ -397,9 +425,18 @@ export function allLessons(courses = COURSES) {
           section: s.title,
           sectionIndex: si,
           effort: EFFORT[kind](min),
+          // Optional lessons stay tickable but are left out of the daily plan.
+          optional: opts.optional || s.optional || null,
+          hard: !!opts.hard,
         });
       }
     });
   }
   return out;
+}
+
+// Lessons the daily plan schedules. Optional ones only if the setting asks,
+// and "hard" optional ones (AWS setup) never.
+export function plannable(lessons, includeOptional = false) {
+  return lessons.filter((l) => !l.optional || (includeOptional && !l.hard));
 }

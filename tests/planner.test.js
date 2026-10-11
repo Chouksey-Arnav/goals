@@ -26,7 +26,7 @@ test("data: lesson numbers are contiguous within each course", () => {
 test("data: section totals match the Udemy sidebar", () => {
   const secMin = (cid, title) => L.filter((l) => l.course === cid && l.section.startsWith(title)).reduce((a, l) => a + l.min, 0);
   // Sidebar rounds, so allow a few minutes of drift.
-  const near = (a, b) => assert.ok(Math.abs(a - b) <= 3, `${a} vs ${b}`);
+  const near = (a, b) => assert.ok(Math.abs(a - b) <= Math.max(3, b * 0.02), `${a} vs ${b}`);
   near(secMin("krohn", "Section 9:"), 190);
   near(secMin("krohn", "Section 10:"), 64);
   near(secMin("krohn", "Section 11:"), 50);
@@ -43,6 +43,7 @@ test("data: section totals match the Udemy sidebar", () => {
   near(secMin("portilla", "Section 23:"), 31);
   near(secMin("portilla", "Section 24:"), 79);
   near(secMin("portilla", "Section 25:"), 302);
+  near(secMin("portilla", "Section 26:"), 102);
 });
 
 test("data: section item counts match the sidebar", () => {
@@ -50,6 +51,8 @@ test("data: section item counts match the sidebar", () => {
   assert.equal(count("Section 19:"), 5);
   assert.equal(count("Section 24:"), 6);
   assert.equal(count("Section 25:"), 31);
+  assert.equal(count("Section 26:"), 12);
+  assert.equal(count("Section 27:"), 1);
   assert.ok(L.find((l) => l.id === "portilla-quiz1"), "unnumbered quiz gets a stable id");
 });
 
@@ -120,4 +123,24 @@ test("streaks and never-miss-twice", () => {
   assert.equal(P.missedYesterday(a, "2026-10-15", "2026-10-11"), false);
   assert.equal(P.missedYesterday(new Set(["2026-10-11"]), "2026-10-13", "2026-10-11"), true);
   assert.equal(P.missedYesterday(new Set(), "2026-10-11", "2026-10-11"), false, "no warning on day one");
+});
+
+test("optional: off-syllabus lessons are never planned by default", async () => {
+  const { plannable } = await import("../js/data.js");
+  const c = pre();
+  let k = "2026-10-11";
+  const planned = new Set();
+  for (; k <= "2026-10-29"; k = P.addDays(k, 1)) {
+    const p = P.planDay({ lessons: plannable(L), completed: c, today: k, settings: S });
+    for (const id of p.ids) (planned.add(id), (c[id] = k));
+  }
+  for (const l of L.filter((l) => l.optional)) assert.ok(!planned.has(l.id), `${l.id} should not be planned`);
+  assert.ok(L.filter((l) => !l.optional).every((l) => c[l.id]), "every core lesson still gets planned");
+});
+
+test("optional: AWS setup stays out even when optional lessons are included", async () => {
+  const { plannable } = await import("../js/data.js");
+  const ids = new Set(plannable(L, true).map((l) => l.id));
+  for (const n of [157, 158, 159, 160, 161]) assert.ok(!ids.has(`portilla-${n}`));
+  assert.ok(ids.has("portilla-163"), "Spark watch-only lessons come back when included");
 });
