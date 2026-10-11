@@ -140,24 +140,33 @@ export function minutesByDay(lessons, completed) {
 
 // A day "counts" if you showed up (finished at least one lesson).
 // Streak = consecutive counted days ending today, or yesterday if today
-// is still in progress.
-export function streak(activeDays, today) {
+// is still in progress. Rest days (isRest) neither add to nor break it.
+export function streak(activeDays, today, isRest = () => false) {
+  if (!activeDays.size) return 0;
+  const first = [...activeDays].sort()[0];
   let k = activeDays.has(today) ? today : addDays(today, -1);
   let n = 0;
-  while (activeDays.has(k)) {
-    n++;
+  while (k >= first) {
+    if (activeDays.has(k)) n++;
+    else if (!isRest(k)) break;
     k = addDays(k, -1);
   }
   return n;
 }
 
-export function bestStreak(activeDays) {
+export function bestStreak(activeDays, isRest = () => false) {
   const keys = [...activeDays].sort();
   let best = 0;
   let run = 0;
   let prev = null;
   for (const k of keys) {
-    run = prev && addDays(prev, 1) === k ? run + 1 : 1;
+    let joined = false;
+    if (prev) {
+      let g = addDays(prev, 1);
+      while (g < k && isRest(g)) g = addDays(g, 1);
+      joined = g === k;
+    }
+    run = joined ? run + 1 : 1;
     best = Math.max(best, run);
     prev = k;
   }
