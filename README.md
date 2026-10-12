@@ -64,6 +64,10 @@ Three emails a day, written from your synced record, sent through your Gmail wit
 
 Rest days get a short morning note only. After the last lesson you get one celebration email, then they stop.
 
+### "Send me motivation" button
+
+On the Today tab. One tap emails you a push built from this exact moment. Not started: "Right now: open X. Just 2 minutes." Partway: what's left and the next lesson. Done: what that's worth. It always includes a fresh Atomic Habits idea that is never this morning's and never repeats within the day. It goes to `EMAIL_TO` and `EMAIL_CC`, never to partners. It saves any unsynced ticks first, works only for the owner's signed-in account, and is limited to 1 a minute and 8 a day (`POST /api/boost`).
+
 ### More people (up to 15 per list)
 
 - **`EMAIL_CC`**: people who get copies of your three daily emails.

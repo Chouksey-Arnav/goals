@@ -152,3 +152,25 @@ export function schedulePush() {
     emit();
   }, 800);
 }
+
+// "Send me motivation". Saves any tick still waiting in the push batch
+// first, so the email is built from what you did a second ago.
+export async function boost() {
+  if (!client || !user) return { error: "Sign in first (Settings), so the email knows your progress." };
+  try {
+    if (pushTimer) {
+      clearTimeout(pushTimer);
+      pushTimer = null;
+      await write(hooks.getState());
+      status.lastSync = new Date();
+    }
+    const { data } = await client.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return { error: "Session expired. Sign in again in Settings." };
+    const res = await fetch("/api/boost", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const body = await res.json().catch(() => ({}));
+    return res.ok ? body : { error: body.error || `Error ${res.status}` };
+  } catch {
+    return { error: "Couldn't reach the server. Check your connection." };
+  }
+}

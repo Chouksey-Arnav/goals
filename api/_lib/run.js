@@ -38,7 +38,7 @@ export async function loadDay(cfg, at = new Date(), userId = null) {
   return { day, hour, state, F, Fy, syncedAt, userId: uid };
 }
 
-function firstName(state, cfg) {
+export function firstName(state, cfg) {
   if (cfg.name) return cfg.name;
   const signer = (state?.contract?.signer || "").trim();
   return signer ? signer.split(/\s+/)[0] : "";

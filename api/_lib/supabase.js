@@ -108,3 +108,9 @@ export async function releaseSlot(cfg, recipient, day, slot) {
 export async function claimLoginSend(cfg, email) {
   return call(cfg, "/rest/v1/rpc/claim_login_send", { method: "POST", body: JSON.stringify({ p_email: email }) });
 }
+
+// "Send me motivation" throttle. Returns today's press count (1..8), or 0
+// when it's too soon or the day's limit is reached.
+export async function claimBoostSend(cfg, email, day) {
+  return call(cfg, "/rest/v1/rpc/claim_boost_send", { method: "POST", body: JSON.stringify({ p_email: email, p_day: day }) });
+}

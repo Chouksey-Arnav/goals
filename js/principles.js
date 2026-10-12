@@ -72,7 +72,7 @@ export const PRINCIPLES = [
   {
     id: "one-space", law: 1, title: "One space, one use",
     idea: "Context becomes the cue. If your desk is also where you scroll and game, it cues all three. Give studying its own place, even if it's one chair or one corner.",
-    action: (F) => `${F.s.where} is for ML today. If you catch yourself scrolling there, stand up and do it somewhere else.`,
+    action: (F) => `Today, ${F.s.where} is for ML only. If you want to scroll, get up and do it somewhere else.`,
   },
   {
     id: "scorecard", law: 1, title: "Habits scorecard",

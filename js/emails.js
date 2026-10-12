@@ -10,7 +10,7 @@
 
 import { COURSES, KIND_LABEL, KIND_TIP } from "./data.js";
 import * as P from "./planner.js";
-import { LAW_NAMES, pickPrinciple, fmtMinutes as fmt } from "./principles.js";
+import { LAW_NAMES, PRINCIPLES, pickPrinciple, principle, rotation, fmtMinutes as fmt } from "./principles.js";
 import { LESSONS } from "./digest.js";
 import { plannable } from "./data.js";
 
@@ -435,4 +435,73 @@ export function composePartner(Fy, F, ctx) {
   );
   const footer = `You're getting this because ${who === "Your friend" ? "a friend" : who} added you as an accountability partner in their Goals habit tracker (from Atomic Habits: someone watching makes skipping costly). Reply to reach them directly. To stop these, ask them to remove you.`;
   return wrap(`${ctx.name ? `${ctx.name}'s` : "Goals"} check-in, ${day}: ${short}`, status, blocks, footer);
+}
+
+// ---------- on demand: the "Send me motivation" button
+//
+// Pressed when you need a push right now. Built from this moment's record,
+// not a canned quote: the one next action, what's left, why it matters, and
+// a different Atomic Habits idea on every press (n = presses today, 1..8).
+
+export function composeBoost(F, ctx, n = 1) {
+  const notStarted = !F.shownToday && !F.finished && !F.rest;
+  const pr = boostPrinciple(F, ctx.dayIndex, n, notStarted ? "two-minute" : undefined);
+  const left = F.leftLessons.length;
+  const leftMin = Math.max(0, F.plan.targetMin - F.doneMin);
+  const daysLeft = P.diffDays(F.t, F.s.deadline) + 1;
+  const first = F.next ? cut(F.next.title, 44) : "";
+  const blocks = [heading(ctx.name ? `${ctx.name}, here's your push.` : "Here's your push.")];
+  let subject;
+  let opener;
+
+  if (F.finished) {
+    subject = "⚡ Both courses are done. Aim it at the olympiad.";
+    opener = "The foundation is finished. Motivation now goes into what the courses didn't cover: PyTorch, CNNs, transformers. Pick one and start a 25-minute block.";
+    blocks.push(para(opener));
+  } else if (F.complete) {
+    subject = "⚡ Today's already done. Here's what that's worth.";
+    opener = `You finished today's plan: ${plural(F.planDone.length || F.doneToday.length, "lesson")}. The motivation you feel right now is the reward working. Either bank one more lesson to lighten tomorrow, or rest without guilt. Both are wins.`;
+    blocks.push(para(opener));
+  } else if (F.rest) {
+    subject = "⚡ Rest day, but you've got energy. Use it.";
+    opener = "Nothing is planned today, so anything you do now is pure gain: it comes straight off the rest of the month.";
+    blocks.push(para(opener));
+    blocks.push(nextBlock(F, "If you want to get ahead"));
+  } else if (!F.shownToday) {
+    subject = `⚡ Right now: open "${first}". Just 2 minutes.`;
+    opener = `You asked for a push, so here it is: don't think about all ${plural(F.planLessons.length, "lesson")}. Open "${F.next?.title}" and press play. Two minutes. Motivation follows action, not the other way round.`;
+    blocks.push(para(opener));
+    blocks.push(nextBlock(F, "Start here, right now"));
+  } else {
+    subject = `⚡ ${plural(left, "lesson")} left, ~${fmt(leftMin)}. Next: "${first}"`;
+    opener = `You're ${F.pct}% through today: ${F.planDone.length} of ${F.planLessons.length} done, about ${fmt(leftMin)} to go. You've already done the hardest part, which is starting. Ride this.`;
+    blocks.push(para(opener));
+    blocks.push(progressBar(F));
+    blocks.push(nextBlock(F));
+  }
+
+  const why = [
+    F.votes ? `Every lesson is a vote for "${F.s.identity}" You've cast ${F.votes}.` : `Every lesson is a vote for "${F.s.identity}" Cast your first one now.`,
+    daysLeft > 0 && !F.finished ? `${plural(daysLeft, "day")} to ${dateLabel(F.s.deadline, { month: "short", day: "numeric" })}.` : "",
+    F.streak > 0 ? `Your chain is at ${plural(F.streak, "day")}.` : "",
+  ].filter(Boolean).join(" ");
+  blocks.push(para(why, { muted: true }));
+  blocks.push(principleHtml(pr, pr.action(F)));
+  blocks.push(button(F.complete || F.finished ? "Open Goals" : "Start now", `${ctx.appUrl}/#today`));
+  const footer = `You pressed "Send me motivation"${n > 1 ? ` (#${n} today)` : ""}. Based on progress synced ${ctx.syncedAt}.\n${ctx.appUrl}`;
+  return wrap(subject, opener, blocks, footer);
+}
+
+// Every press that day gets a distinct idea, never the one this morning's
+// email already taught. `prefer` (the two-minute rule when you haven't
+// started) takes the first press; the rotation fills the rest.
+export function boostPrinciple(F, dayIndex, n, prefer) {
+  const morning = pickPrinciple(F, "morning", dayIndex).id;
+  const lead = prefer && prefer !== morning ? [principle(prefer)] : [];
+  const order = [...lead];
+  for (let k = 0; k < PRINCIPLES.length; k++) {
+    const pr = rotation(dayIndex + 11 + k, "boost");
+    if (pr.id !== morning && pr.id !== prefer) order.push(pr);
+  }
+  return order[(n - 1) % order.length];
 }
