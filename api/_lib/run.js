@@ -3,9 +3,11 @@
 import { config, missing } from "./env.js";
 import * as DB from "./supabase.js";
 import { sendMail, explainMailError } from "./mailer.js";
-import { dayFacts, zonedParts } from "../../js/digest.js";
+import { dayFacts, zonedParts, reachedHalfway, BY_ID } from "../../js/digest.js";
 import { normalize } from "../../js/state.js";
-import { compose, composePartner } from "../../js/emails.js";
+import { compose, composePartner, composeDone, composeHabitNew, composeWeekly } from "../../js/emails.js";
+import { completionEvents, newHabitEvents, isEventSlot } from "../../js/dailyhabits.js";
+import { nudgeAllowed } from "../../js/schedule.js";
 import { diffDays, addDays } from "../../js/planner.js";
 import { TRACK_START } from "../../js/data.js";
 
@@ -44,16 +46,23 @@ export function firstName(state, cfg) {
   return signer ? signer.split(/\s+/)[0] : "";
 }
 
-export function buildEmail(cfg, slot, ctx) {
-  if (slot === "partner") return composePartner(ctx.Fy, ctx.F, { name: firstName(ctx.state, cfg), state: ctx.state });
-  return compose(slot, ctx.F, {
+// What every email composer gets besides the day's facts.
+export function mailCtx(cfg, ctx) {
+  return {
     name: firstName(ctx.state, cfg),
     appUrl: cfg.appUrl,
     syncedAt: ctx.syncedAt,
     dayIndex: diffDays(TRACK_START, ctx.day),
     state: ctx.state,
     middayHour: cfg.middayHour,
-  });
+  };
+}
+
+// extra: { justDone } lists completions that rode along on this email.
+export function buildEmail(cfg, slot, ctx, extra = {}) {
+  if (slot === "partner") return composePartner(ctx.Fy, ctx.F, { name: firstName(ctx.state, cfg), state: ctx.state });
+  if (slot === "weekly") return composeWeekly(ctx.F, mailCtx(cfg, ctx));
+  return compose(slot, ctx.F, { ...mailCtx(cfg, ctx), ...extra });
 }
 
 // When there's no data to work from, say so once a morning instead of going
@@ -109,6 +118,74 @@ export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
       .catch((e) => console.error("Sent, but could not record sent_at:", e.message));
   }
   return { slot, sent: true, subject: mail.subject, recipients: (addr.to ? 1 : 0) + addr.bcc.length, messageId: id };
+}
+
+// ---------- emails triggered by doing things
+//
+// Every lesson ticked today, every habit done today and every habit created
+// today gets an email, exactly once, decided from the database (never from
+// what the app claims). Called by POST /api/notify right after a sync, and
+// by every hourly cron run as a catch-up, so a dropped request costs at most
+// an hour, not the email.
+//
+// - A new habit: its own "here's how to make it stick" email.
+// - Completions: one email for whatever finished since the last one (usually
+//   exactly one thing). If that same moment also earns the midday email
+//   (weekend morning block done, or the whole day done), the completions
+//   ride on the midday email instead of arriving as a second one.
+// - At most MAX_EVENT_ROWS completions/new habits a day, so a stuck client
+//   or a stolen session can't burn through Gmail's daily sending limit.
+
+export const MAX_EVENT_ROWS = 60;
+
+// io: { db, send } swaps the database and Gmail for tests.
+export async function sendEvents(cfg, ctx, { midday = true, io = { db: DB, send: sendMail } } = {}) {
+  if (ctx.problem) return [];
+  const { db } = io;
+  const sent = await db.slotsSent(cfg, cfg.to, ctx.day);
+  const used = Object.keys(sent).filter(isEventSlot).length;
+  if (used >= MAX_EVENT_ROWS) return [{ slot: "events", sent: false, reason: `daily cap of ${MAX_EVENT_ROWS} reached` }];
+  const addr = addressing(cfg, "morning");
+  const mctx = mailCtx(cfg, ctx);
+  const results = [];
+
+  for (const ev of newHabitEvents(ctx.state, ctx.day).filter((e) => !sent[e.slot]).slice(0, 5)) {
+    if (!(await db.claimSlot(cfg, cfg.to, ctx.day, ev.slot))) continue;
+    results.push(await sendClaimed(cfg, ctx.day, [ev.slot], composeHabitNew(ctx.F, ev.habit, mctx), addr, io));
+  }
+
+  const pending = completionEvents(ctx.state, ctx.day, BY_ID)
+    .filter((e) => !sent[e.slot])
+    .slice(0, MAX_EVENT_ROWS - used);
+  const middayNow = midday && reachedHalfway(ctx.F) && nudgeAllowed(ctx.hour, sent, cfg);
+  if (!pending.length && !middayNow) return results;
+  // Claim first: whoever inserts the row sends. A racing run skips what it lost.
+  const mine = [];
+  for (const e of pending) if (await db.claimSlot(cfg, cfg.to, ctx.day, e.slot)) mine.push(e);
+  const withMidday = middayNow && (await db.claimSlot(cfg, cfg.to, ctx.day, "midday"));
+  const middayMail = withMidday ? buildEmail(cfg, "midday", ctx, { justDone: mine }) : null;
+  if (withMidday && !middayMail) await db.releaseSlot(cfg, cfg.to, ctx.day, "midday").catch(() => {});
+  const mail = middayMail || composeDone(ctx.F, mine, mctx);
+  if (!mail) return results; // nothing claimed that needs sending
+  const slots = [...mine.map((e) => e.slot), ...(middayMail ? ["midday"] : [])];
+  results.push(await sendClaimed(cfg, ctx.day, slots, mail, addr, io));
+  return results;
+}
+
+// Send for slots this run already claimed. Failure gives every claim back so
+// the next run retries; success marks every one sent. Never throws.
+async function sendClaimed(cfg, day, slots, mail, addr, { db, send }) {
+  try {
+    const id = await send(cfg, { ...addr, ...mail });
+    for (const slot of slots) {
+      await db.markSent(cfg, cfg.to, day, slot, { sent_at: new Date().toISOString(), subject: mail.subject.slice(0, 200) })
+        .catch((e) => console.error(`Sent, but could not record ${slot}:`, e.message));
+    }
+    return { slot: slots.length === 1 ? slots[0] : slots, sent: true, subject: mail.subject, recipients: 1 + addr.bcc.length, messageId: id };
+  } catch (e) {
+    for (const slot of slots) await db.releaseSlot(cfg, cfg.to, day, slot).catch(() => {});
+    return { slot: slots.length === 1 ? slots[0] : slots, sent: false, error: explainMailError(e) };
+  }
 }
 
 // When the automated emails can't go out (database down, a key revoked, a

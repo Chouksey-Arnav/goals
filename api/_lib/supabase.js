@@ -27,10 +27,12 @@ async function call(cfg, path, init = {}) {
   return json;
 }
 
-// The two misconfigurations that have actually happened, in plain words.
+// Misconfigurations that have actually happened (or will, on a missed migration), in plain words.
 export function hint(status, msg) {
   if (/permission denied for (table|function)/i.test(msg))
     return " (the secret key's role has no grant on it: run supabase/migrations/20261012030000_grant_service_role.sql in the SQL editor)";
+  if (/email_log_slot_check/i.test(msg))
+    return " (the database doesn't know the habit and completion emails yet: run supabase/migrations/20261013000000_email_log_events.sql in the SQL editor)";
   if (status === 401 && /invalid api key|jwt/i.test(msg))
     return " (SUPABASE_SERVICE_ROLE_KEY is wrong or from another project: copy the secret key from Supabase, Project Settings, API Keys)";
   return "";
@@ -79,7 +81,7 @@ export async function loadProgress(cfg, userId) {
 }
 
 // Insert-or-nothing. Returns true only for the caller that created the row,
-// so a cron run and a midday nudge racing each other can't both send.
+// so a cron run and an /api/notify call racing each other can't both send.
 //
 // A claim with no sent_at that's older than STALE_MIN means the run that made
 // it died between claiming and sending (a timeout, a crash) without giving it
