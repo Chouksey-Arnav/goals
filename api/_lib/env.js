@@ -5,10 +5,39 @@ import { SUPABASE_URL as PUBLIC_URL } from "../../js/config.js";
 
 const DEFAULT_APP_URL = "https://goals-taupe-six.vercel.app";
 
+export const MAX_EXTRA = 15;
+
+// "a@x.com, b@y.com; c@z.com" -> unique, lowercased, without the owner.
+export function parseList(raw, exclude = []) {
+  const skip = new Set(exclude.map((e) => e.toLowerCase()));
+  const out = [];
+  for (const part of String(raw || "").split(/[,;\s]+/)) {
+    const e = part.trim().toLowerCase();
+    if (e && !skip.has(e) && !out.includes(e)) out.push(e);
+  }
+  return out;
+}
+const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// A typo drops that one address; more than 15 drops the whole list (better
+// to notice than to silently pick which friends stop hearing from you).
+function recipients(name, raw, owner, warnings) {
+  const list = parseList(raw, [owner]);
+  const bad = list.filter((e) => !isEmail(e));
+  if (bad.length) warnings.push(`${name}: skipped, not an email: ${bad.join(", ")}`);
+  const good = list.filter(isEmail);
+  if (good.length > MAX_EXTRA) {
+    warnings.push(`${name}: ${good.length} addresses, the limit is ${MAX_EXTRA}. Nobody on this list gets email until you trim it.`);
+    return [];
+  }
+  return good;
+}
+
 export function config() {
   const env = process.env;
   const gmailUser = (env.GMAIL_USER || "").trim();
   const to = (env.EMAIL_TO || gmailUser).trim();
+  const warnings = [];
   const hour = (v, d) => {
     const n = Number(v);
     return Number.isInteger(n) && n >= 0 && n <= 23 ? n : d;
@@ -19,6 +48,12 @@ export function config() {
     gmailPass: (env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, ""),
     fromName: env.EMAIL_FROM_NAME || "Goals",
     to: to.toLowerCase(),
+    // Up to 15 people who get copies of your three daily emails (BCC).
+    cc: recipients("EMAIL_CC", env.EMAIL_CC, to, warnings),
+    // Up to 15 accountability partners who get the morning partner report (BCC).
+    partners: recipients("PARTNER_EMAILS", env.PARTNER_EMAILS, to, warnings),
+    // Problems with the optional lists. They never block your own emails.
+    warnings,
     supabaseUrl: (env.SUPABASE_URL || PUBLIC_URL || "").replace(/\/+$/, ""),
     serviceKey: env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY || "",
     cronSecret: env.CRON_SECRET || "",

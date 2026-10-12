@@ -5,8 +5,8 @@ import * as DB from "./supabase.js";
 import { sendMail, explainMailError } from "./mailer.js";
 import { dayFacts, zonedParts } from "../../js/digest.js";
 import { normalize } from "../../js/state.js";
-import { compose } from "../../js/emails.js";
-import { diffDays } from "../../js/planner.js";
+import { compose, composePartner } from "../../js/emails.js";
+import { diffDays, addDays } from "../../js/planner.js";
 import { TRACK_START } from "../../js/data.js";
 
 export { config, missing };
@@ -33,7 +33,9 @@ export async function loadDay(cfg, at = new Date(), userId = null) {
   const syncedAt = synced.toLocaleString("en-US", {
     timeZone: cfg.tz, weekday: "short", hour: "numeric", minute: "2-digit",
   });
-  return { day, hour, state, F, syncedAt, userId: uid };
+  // Yesterday's facts, for the partner report.
+  const Fy = dayFacts(state, addDays(day, -1), keyOf);
+  return { day, hour, state, F, Fy, syncedAt, userId: uid };
 }
 
 function firstName(state, cfg) {
@@ -43,6 +45,7 @@ function firstName(state, cfg) {
 }
 
 export function buildEmail(cfg, slot, ctx) {
+  if (slot === "partner") return composePartner(ctx.Fy, ctx.F, { name: firstName(ctx.state, cfg), state: ctx.state });
   return compose(slot, ctx.F, {
     name: firstName(ctx.state, cfg),
     appUrl: cfg.appUrl,
@@ -68,17 +71,29 @@ export function setupEmail(cfg, problem) {
   };
 }
 
+// Who gets each slot. Your three emails go to you, with EMAIL_CC as BCC.
+// The partner report goes to PARTNER_EMAILS only, all BCC with no To, so
+// partners never see each other's addresses and your inbox stays at three.
+export function addressing(cfg, slot) {
+  if (slot === "partner") return cfg.partners.length ? { to: undefined, bcc: cfg.partners } : null;
+  return { to: cfg.to, bcc: cfg.cc };
+}
+
 // Claim the slot, send, record. Returns a small report for logs and the API.
 export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
+  const addr = addressing(cfg, slot);
+  if (!addr) return { slot, sent: false, reason: "PARTNER_EMAILS is empty" };
   const mail = ctx.problem ? (slot === "morning" ? setupEmail(cfg, ctx.problem) : null) : buildEmail(cfg, slot, ctx);
-  if (!mail) return { slot, sent: false, reason: ctx.problem || "nothing worth sending (rest day or finished)" };
+  if (!mail) return { slot, sent: false, reason: ctx.problem || "nothing worth sending (rest day, before tracking, or finished)" };
+  // The sign-in reminder is for you only, never for copies or partners.
+  if (ctx.problem) addr.bcc = [];
   if (!force) {
     const mine = await DB.claimSlot(cfg, cfg.to, ctx.day, slot);
     if (!mine) return { slot, sent: false, reason: "already sent today" };
   }
   let id;
   try {
-    id = await sendMail(cfg, { to: cfg.to, ...mail });
+    id = await sendMail(cfg, { ...addr, ...mail });
   } catch (e) {
     // Not sent: give the claim back so the next hourly run retries.
     if (!force) await DB.releaseSlot(cfg, cfg.to, ctx.day, slot).catch(() => {});
@@ -92,7 +107,7 @@ export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
     await DB.markSent(cfg, cfg.to, ctx.day, slot, { sent_at: new Date().toISOString(), subject: mail.subject.slice(0, 200) })
       .catch((e) => console.error("Sent, but could not record sent_at:", e.message));
   }
-  return { slot, sent: true, subject: mail.subject, messageId: id };
+  return { slot, sent: true, subject: mail.subject, recipients: (addr.to ? 1 : 0) + addr.bcc.length, messageId: id };
 }
 
 export function json(res, status, body) {

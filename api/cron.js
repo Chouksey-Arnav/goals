@@ -5,15 +5,16 @@
 //
 // Manual use (needs the secret, as a header or ?key=):
 //   /api/cron?slot=morning&dry=1&key=SECRET    preview the email in the browser
+//                                              (slot=partner previews the partner report)
 //   /api/cron?slot=evening&force=1&key=SECRET  send it now, ignoring "already sent"
 //   /api/cron?status=1&key=SECRET              what's been sent today, and config check
 
 import { timingSafeEqual } from "node:crypto";
 import { config, missing, loadDay, sendSlot, buildEmail, json } from "./_lib/run.js";
 import { slotsSent } from "./_lib/supabase.js";
-import { dueSlot, windows } from "../js/schedule.js";
+import { dueSlots, windows } from "../js/schedule.js";
 
-const SLOTS = ["morning", "midday", "evening"];
+const SLOTS = ["morning", "midday", "evening", "partner"];
 
 function authorized(req, secret) {
   if (!secret) return false;
@@ -41,8 +42,9 @@ export default async function handler(req, res) {
     if (q.get("status")) {
       const sent = await slotsSent(cfg, cfg.to, ctx.day);
       return json(res, 200, {
-        to: cfg.to, from: cfg.gmailUser, timeZone: cfg.tz, localDay: ctx.day, localHour: ctx.hour,
-        windows: windows(cfg), sentToday: sent, due: dueSlot(ctx.hour, sent, cfg), problem: ctx.problem || null,
+        to: cfg.to, from: cfg.gmailUser, copies: cfg.cc.length, partners: cfg.partners.length, warnings: cfg.warnings,
+        timeZone: cfg.tz, localDay: ctx.day, localHour: ctx.hour, windows: windows(cfg), sentToday: sent,
+        due: dueSlots(ctx.hour, sent, cfg, { partners: cfg.partners.length > 0 }), problem: ctx.problem || null,
         today: ctx.F ? { lessons: ctx.F.planLessons.length, done: ctx.F.planDone.length, pct: ctx.F.pct, streak: ctx.F.streak } : null,
         syncedAt: ctx.syncedAt || null,
       });
@@ -63,15 +65,25 @@ export default async function handler(req, res) {
       return res.end(mail.html.replace("<body", `<body data-subject="${mail.subject.replace(/"/g, "&quot;")}"`));
     }
 
-    let slot = slotParam;
-    if (!slot) {
+    if (cfg.warnings.length) console.warn(JSON.stringify({ warnings: cfg.warnings }));
+    let slots = slotParam ? [slotParam] : null;
+    if (!slots) {
       const sent = await slotsSent(cfg, cfg.to, ctx.day);
-      slot = dueSlot(ctx.hour, sent, cfg);
-      if (!slot) return json(res, 200, { sent: false, reason: "nothing due this hour", localHour: ctx.hour });
+      slots = dueSlots(ctx.hour, sent, cfg, { partners: cfg.partners.length > 0 });
+      if (!slots.length) return json(res, 200, { sent: false, reason: "nothing due this hour", localHour: ctx.hour, warnings: cfg.warnings });
     }
-    const out = await sendSlot(cfg, ctx, slot, { force: !!q.get("force") });
-    console.log(JSON.stringify({ at: new Date().toISOString(), day: ctx.day, hour: ctx.hour, ...out }));
-    return json(res, 200, out);
+    // One failing email must not stop the others in the same run.
+    const results = [];
+    for (const slot of slots) {
+      try {
+        results.push(await sendSlot(cfg, ctx, slot, { force: !!q.get("force") }));
+      } catch (e) {
+        results.push({ slot, sent: false, error: String(e.message || e) });
+      }
+    }
+    console.log(JSON.stringify({ at: new Date().toISOString(), day: ctx.day, hour: ctx.hour, results }));
+    const failed = results.some((r) => r.error);
+    return json(res, failed ? 502 : 200, slotParam ? results[0] : { results, warnings: cfg.warnings });
   } catch (e) {
     console.error(e);
     return json(res, e.status && e.status < 600 ? e.status : 500, { error: String(e.message || e) });
