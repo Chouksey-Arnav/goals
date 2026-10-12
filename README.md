@@ -66,6 +66,12 @@ Three emails a day, written from your synced record, sent through your Gmail wit
 
 Rest days get a short morning note only. After the last lesson you get one celebration email, then they stop.
 
+### A cheer on every tick
+
+Every lesson you tick gets a short toast built from that tick: *"Yes, let's go! 22 min more and today's done."*, *"You just saved 30 min of your day."*, *"Congratulations, you're 10% closer to today's goal."*, followed by a push like *"Keep on going, you can do this."* Weekends add block-aware lines (*"Morning block: 3 left, about 40 min."*, and a handoff when the morning block is done). Bonus lessons and the tick that finishes the day get their own sets.
+
+[`js/cheers.js`](js/cheers.js) has 36 facts and 32 pushes (over a thousand pairs). Each pool is a shuffled deck: a line only comes back after every other line that fits has been shown. Lines that would be false right now (e.g. "one lesson left") wait in the deck until they're true. Percent lines need the tick to move the ring at least 3%. A suspiciously fast tick still gets the honest "a tick isn't learning" instead. Decks are kept per device in `localStorage`.
+
 ### "Send me motivation" button
 
 On the Today tab. One tap emails you a push built from this exact moment. Not started: "Right now: open X. Just 2 minutes." Partway: what's left and the next lesson. Done: what that's worth. It always includes a fresh Atomic Habits idea that is never this morning's and never repeats within the day. It goes to `EMAIL_TO` and `EMAIL_CC`, never to partners. It saves any unsynced ticks first, works only for the owner's signed-in account, and is limited to 1 a minute and 8 a day (`POST /api/boost`).
