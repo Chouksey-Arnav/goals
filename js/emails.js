@@ -22,6 +22,9 @@ const esc = (s) =>
 const dateLabel = (k, opts = { weekday: "long", month: "long", day: "numeric" }) =>
   P.parseKey(k).toLocaleDateString("en-US", opts);
 const weekday = (k) => dateLabel(k, { weekday: "long" });
+// 14 -> "2 pm". The weekend morning block is due by the midday email.
+export const hourLabel = (h) => `${h % 12 || 12} ${h < 12 ? "am" : "pm"}`;
+const amDue = (ctx) => hourLabel(ctx.middayHour ?? 14);
 
 function money(F, x) {
   const n = Math.round(x * 100) / 100;
@@ -75,10 +78,19 @@ function progressBar(F) {
   );
 }
 
-function checklist(F, title = "Today's checklist") {
+// Weekends list the morning and afternoon blocks separately.
+function checklist(F, title = "Today's checklist", ctx = {}) {
   if (!F.planLessons.length) return block("", "");
+  if (!F.sessions) return lessonList(F, F.planLessons, `${title} · one sitting`);
+  const { am, pm } = F.sessions;
+  const a = lessonList(F, am.lessons, `Morning block · ~${fmt(am.min)} · done by ${amDue(ctx)}`);
+  const b = lessonList(F, pm.lessons, `Afternoon block · ~${fmt(pm.min)}`);
+  return block(`${a.text}\n\n${b.text}`, a.html + b.html);
+}
+
+function lessonList(F, lessons, title) {
   const done = (l) => F.planDone.includes(l);
-  const rows = F.planLessons.map((l) => ({ l, ok: done(l), c: COURSE[l.course] }));
+  const rows = lessons.map((l) => ({ l, ok: done(l), c: COURSE[l.course] }));
   return block(
     `${title}:\n${rows.map(({ l, ok, c }) => `${ok ? "[x]" : "[ ]"} ${c.short}, ${l.label}: ${l.title} (~${fmt(l.effort)})`).join("\n")}`,
     `<div style="font-size:13px;font-weight:700;color:#111827;margin:0 0 8px">${esc(title)}</div>
@@ -180,7 +192,9 @@ export function compose(slot, F, ctx) {
 function footerFor(F, ctx) {
   return [
     `Based on progress synced ${ctx.syncedAt}. Tick lessons while signed in so these stay accurate.`,
-    "Three emails a day: a morning plan, a check-in the moment you hit halfway (or mid-afternoon), and an evening wrap.",
+    F.sessions
+      ? "Weekend: three emails. The morning plan, the afternoon block the moment your morning block is done (or mid-afternoon), and an evening wrap."
+      : "Weekday: three emails. The morning plan, a mid-afternoon check-in (or the moment the whole sitting is done), and an evening wrap.",
     `${ctx.appUrl}`,
   ].join("\n");
 }
@@ -254,19 +268,29 @@ function morning(F, ctx) {
   } else if (F.planDone.length > 0) {
     subject = `${F.planDone.length}/${n} done already. Keep it rolling.`;
     opener = `You've started before this email even landed. ${plural(F.leftLessons.length, "lesson")} left, about ${fmt(F.plan.targetMin - F.doneMin)}.`;
+    if (F.sessions && !F.sessions.am.done) opener += ` Finish the morning block (${plural(F.sessions.am.left.length, "lesson")}, ~${fmt(F.sessions.am.leftMin)}) by ${amDue(ctx)}.`;
+    else if (F.sessions) opener += " Morning block already done. The afternoon block is all that's left.";
+    else opener += " Same sitting: keep going until the list is empty.";
+  } else if (F.sessions) {
+    const { am, pm } = F.sessions;
+    subject = `${weekday(F.t)}: ${plural(am.lessons.length, "lesson")} this morning, ${pm.lessons.length} this afternoon. Start with "${first}"`;
+    opener = `${F.streak > 0 ? `Your chain is at ${plural(F.streak, "day")}. ` : "Day one of a chain is the most important link. "}Weekend split: ${plural(n, "lesson")}, about ${time}, in two blocks. Morning block: ${plural(am.lessons.length, "lesson")}, ~${fmt(am.min)}, done by ${amDue(ctx)}. Afternoon block: ${plural(pm.lessons.length, "lesson")}, ~${fmt(pm.min)}. You've got this.`;
   } else {
-    subject = `${weekday(F.t)}: ${plural(n, "lesson")}, ~${time}. Start with "${first}"`;
-    opener = F.streak > 0
-      ? `Your chain is at ${plural(F.streak, "day")}. Today is ${plural(n, "lesson")}, about ${time} of real work. Get all of it done today. You've got this.`
-      : `Today is ${plural(n, "lesson")}, about ${time} of real work. Day one of a chain is the most important link. Get all of it done today. You've got this.`;
+    subject = `${weekday(F.t)}: ${plural(n, "lesson")}, ~${time}, one sitting. Start with "${first}"`;
+    opener = `${F.streak > 0 ? `Your chain is at ${plural(F.streak, "day")}. ` : "Day one of a chain is the most important link. "}Today is ${plural(n, "lesson")}, about ${time} of real work, in one sitting: ${F.s.when} at ${F.s.where}, start to finish in one go. No splitting it up. You've got this.`;
   }
 
   blocks.unshift(heading(hi(ctx, "Good morning")));
   blocks.push(para(opener));
   if (!F.complete) blocks.push(nextBlock(F));
   if (F.planDone.length) blocks.push(progressBar(F));
-  if (F.mode !== "min") blocks.push(checklist(F));
-  blocks.push(para(`The plan: ${F.s.when} at ${F.s.where}. Math first while your brain is fresh, then code. Solve first means attempt it before the answer.`, { muted: true }));
+  if (F.mode !== "min") blocks.push(checklist(F, "Today's checklist", ctx));
+  blocks.push(para(
+    F.sessions
+      ? `The plan: morning block now at ${F.s.where}, afternoon block after lunch. Math first while your brain is fresh, then code. Solve first means attempt it before the answer.`
+      : `The plan: ${F.s.when} at ${F.s.where}, everything in one go. Math first while your brain is fresh, then code. Solve first means attempt it before the answer.`,
+    { muted: true }
+  ));
   blocks.push(principleBlock(F, "morning", ctx.dayIndex));
   blocks.push(paceBlock(F));
   blocks.push(statsLine(F));
@@ -291,25 +315,44 @@ function midday(F, ctx) {
       : `All ${plural(n, "lesson")} done, ${fmt(F.doneMin)} of real work. ${F.s.bundle ? `Take your reward now, while it still means something: ${F.s.bundle}.` : "Pick a reward in Settings so tomorrow's 100% pays out."}`;
     blocks.push(para(opener));
     blocks.push(para("Anything more today is a bonus that lightens the rest of the month. Rest is also a fine answer.", { muted: true }));
+  } else if (F.mode === "min") {
+    subject = `Bad-day mode: one lesson. "${cut(F.next?.title || "", 44)}"`;
+    opener = `Today is the minimum. ${F.s.minimum} That one lesson keeps the chain.`;
+    blocks.push(para(opener));
+    blocks.push(nextBlock(F, "Just this one"));
+  } else if (F.sessions) {
+    const { am, pm } = F.sessions;
+    if (am.done) {
+      subject = `Morning block done. Afternoon block: ${plural(pm.left.length, "lesson")}, ~${fmt(pm.leftMin)}.`;
+      opener = `Morning block finished: half the day is banked. Now the afternoon block: ${plural(pm.left.length, "lesson")}, about ${fmt(pm.leftMin)}. Take a short break if you need one, then start. Don't let the break become the afternoon.`;
+      blocks.push(para(opener));
+      blocks.push(progressBar(F));
+      blocks.push(nextBlock(F, "Afternoon block · start here"));
+    } else if (d === 0 && !F.shownToday) {
+      subject = `0 of ${n} done. Start the morning block now, two minutes.`;
+      opener = `Nothing is ticked yet, and the morning block was due by ${amDue(ctx)}. Don't write the day off. Do the morning block now (${plural(am.left.length, "lesson")}, ~${fmt(am.leftMin)}), then roll straight into the afternoon block. Just open "${F.next?.title || "the next lesson"}" and press play.`;
+      blocks.push(para(opener));
+      blocks.push(nextBlock(F, "Two-minute start"));
+    } else {
+      subject = `Morning block: ${plural(am.left.length, "lesson")} left. Finish it, then the afternoon.`;
+      opener = `${d} of ${n} done, but the morning block isn't finished: ${plural(am.left.length, "lesson")}, ~${fmt(am.leftMin)} left in it. Close it out now, then the afternoon block (${plural(pm.lessons.length, "lesson")}, ~${fmt(pm.min)}).`;
+      blocks.push(para(opener));
+      blocks.push(progressBar(F));
+      blocks.push(nextBlock(F));
+    }
   } else if (d === 0 && !F.shownToday) {
-    subject = `0 of ${n} done. Two minutes, that's all.`;
-    opener = `Nothing is ticked yet today. No lecture: just open "${F.next?.title || "the next lesson"}" and press play. Starting is the hard part; continuing is easy.`;
+    subject = `Today: ${plural(n, "lesson")}, ~${fmt(F.plan.targetMin)}, one sitting. Prime it now.`;
+    opener = `Nothing is ticked yet, which is fine: today is one sitting (your plan: ${F.s.when} at ${F.s.where}). Prime it now so it starts at zero effort, and when you sit down, do all ${plural(n, "lesson")} in one go. First up: "${F.next?.title || "the next lesson"}".`;
     blocks.push(para(opener));
-    blocks.push(nextBlock(F, "Two-minute start"));
-  } else if (d * 2 >= n || F.pct >= 50) {
-    subject = `Halfway. ${d} down, ${left} to go. You've got this.`;
-    opener = `${d} of ${n} lessons done. ${plural(left, "lesson")} left, about ${fmt(leftMin)}. You're past the hardest part of any day, which is starting. Finish it.`;
-    blocks.push(para(opener));
-    blocks.push(progressBar(F));
-    blocks.push(nextBlock(F));
+    blocks.push(nextBlock(F, "First up when you sit down"));
   } else {
-    subject = `${d} of ${n} done. ${left} to go.`;
-    opener = `You're moving: ${d} of ${n} lessons done. ${plural(left, "lesson")} left, about ${fmt(leftMin)}. Keep the next one small and immediate.`;
+    subject = `${d} of ${n} done. Same sitting: ${left} to go.`;
+    opener = `You're in the middle of today's sitting: ${d} of ${n} lessons done, ${plural(left, "lesson")} left, about ${fmt(leftMin)}. Don't stop and promise to come back later. Finish all of it in one go.`;
     blocks.push(para(opener));
     blocks.push(progressBar(F));
     blocks.push(nextBlock(F));
   }
-  if (!F.complete && F.mode !== "min") blocks.push(checklist(F, "Today so far"));
+  if (!F.complete && F.mode !== "min") blocks.push(checklist(F, "Today so far", ctx));
   blocks.push(principleBlock(F, "midday", ctx.dayIndex));
   blocks.push(statsLine(F));
   blocks.push(button(F.complete ? "Close the day" : "Back to it", `${ctx.appUrl}/#today`));
@@ -349,7 +392,12 @@ function evening(F, ctx) {
     blocks.push(para("Switch to bad-day mode in the app if you need to: one lesson counts for the chain, and the rest re-plans automatically. No debt, no guilt.", { muted: true }));
   } else {
     subject = `${left} left, ~${fmt(leftMin)}. Finish strong or bank the minimum.`;
-    opener = `${F.planDone.length} of ${n} done, so the chain is safe. ${plural(left, "lesson")} left, about ${fmt(leftMin)}. If you have it in you, finish the day. If not, stop cleanly; whatever is left re-plans into the coming days.`;
+    const where = F.sessions
+      ? F.sessions.am.done
+        ? " The morning block is done; what's left is the afternoon block."
+        : ` The morning block still has ${plural(F.sessions.am.left.length, "lesson")} open.`
+      : " The sitting stopped short of the end.";
+    opener = `${F.planDone.length} of ${n} done, so the chain is safe.${where} ${plural(left, "lesson")} left, about ${fmt(leftMin)}. If you have it in you, finish the day in one go now. If not, stop cleanly; whatever is left re-plans into the coming days.`;
     blocks.push(para(opener));
     blocks.push(progressBar(F));
     blocks.push(nextBlock(F));
@@ -469,12 +517,28 @@ export function composeBoost(F, ctx, n = 1) {
     blocks.push(nextBlock(F, "If you want to get ahead"));
   } else if (!F.shownToday) {
     subject = `⚡ Right now: open "${first}". Just 2 minutes.`;
-    opener = `You asked for a push, so here it is: don't think about all ${plural(F.planLessons.length, "lesson")}. Open "${F.next?.title}" and press play. Two minutes. Motivation follows action, not the other way round.`;
+    const scope = F.sessions
+      ? `the morning block (${plural(F.sessions.am.lessons.length, "lesson")}, ~${fmt(F.sessions.am.min)})`
+      : `all ${plural(F.planLessons.length, "lesson")}`;
+    opener = `You asked for a push, so here it is: don't think about ${scope}. Open "${F.next?.title}" and press play. Two minutes. Motivation follows action, not the other way round.`;
     blocks.push(para(opener));
     blocks.push(nextBlock(F, "Start here, right now"));
+  } else if (F.sessions && !F.sessions.am.done) {
+    const { am } = F.sessions;
+    subject = `⚡ Morning block: ${plural(am.left.length, "lesson")} left, ~${fmt(am.leftMin)}. Next: "${first}"`;
+    opener = `You're ${F.pct}% through today. The morning block has ${plural(am.left.length, "lesson")} left, about ${fmt(am.leftMin)}. Close it out, and half the weekend day is banked.`;
+    blocks.push(para(opener));
+    blocks.push(progressBar(F));
+    blocks.push(nextBlock(F));
+  } else if (F.sessions) {
+    subject = `⚡ Afternoon block: ${plural(left, "lesson")} left, ~${fmt(leftMin)}. Next: "${first}"`;
+    opener = `Morning block done. ${plural(left, "lesson")} left in the afternoon block, about ${fmt(leftMin)}. Start it now, before the break turns into the rest of the day.`;
+    blocks.push(para(opener));
+    blocks.push(progressBar(F));
+    blocks.push(nextBlock(F));
   } else {
     subject = `⚡ ${plural(left, "lesson")} left, ~${fmt(leftMin)}. Next: "${first}"`;
-    opener = `You're ${F.pct}% through today: ${F.planDone.length} of ${F.planLessons.length} done, about ${fmt(leftMin)} to go. You've already done the hardest part, which is starting. Ride this.`;
+    opener = `You're ${F.pct}% through today: ${F.planDone.length} of ${F.planLessons.length} done, about ${fmt(leftMin)} to go. You've already done the hardest part, which is starting. Stay in the sitting and finish it in one go.`;
     blocks.push(para(opener));
     blocks.push(progressBar(F));
     blocks.push(nextBlock(F));

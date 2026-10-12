@@ -3,7 +3,10 @@
 
 import { SUPABASE_URL as PUBLIC_URL } from "../../js/config.js";
 
-const DEFAULT_APP_URL = "https://goals-taupe-six.vercel.app";
+// The address you actually use. Sign-in and local progress are per address,
+// so a link to any other alias (even of this same deployment) opens a
+// signed-out, empty copy of the app. APP_URL overrides it.
+const DEFAULT_APP_URL = "https://goalsforarnav.vercel.app";
 
 export const MAX_EXTRA = 15;
 

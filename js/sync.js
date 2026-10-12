@@ -49,9 +49,10 @@ export async function initSync(h) {
   }
 }
 
-// Step 1 of sign-in: a 6-digit code by email. The server sends it through
-// Gmail (api/login-code.js). If that route isn't deployed or configured,
-// fall back to Supabase's own mailer, which also includes a login link.
+// Step 1 of sign-in: a 6-digit code by email, sent by this app's server
+// through Gmail (Nodemailer, api/login-code.js). Never Supabase's own mailer:
+// it only delivers to the project's team and caps out at a few an hour, so a
+// "fallback" to it just hides the real problem.
 export async function signIn(email) {
   if (!client) return { error: "Sync is not set up." };
   try {
@@ -62,15 +63,11 @@ export async function signIn(email) {
     });
     if (res.ok) return { error: null, via: "gmail" };
     const body = await res.json().catch(() => ({}));
-    if (res.status !== 404 && res.status !== 503) return { error: body.error || `Error ${res.status}` };
+    const why = body.missing?.length ? ` Missing on the server: ${body.missing.join(", ")}.` : "";
+    return { error: (body.error || `Error ${res.status}`) + why };
   } catch {
-    /* offline or no server: fall through */
+    return { error: "Couldn't reach the server. Check your connection." };
   }
-  const { error } = await client.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true },
-  });
-  return { error: error?.message || null, via: "supabase" };
 }
 
 // Step 2: the code from the email. Works in an installed home-screen app,

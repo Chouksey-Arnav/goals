@@ -57,10 +57,19 @@ export function dayFacts(state, t, keyOf = (ms) => P.dayKey(new Date(ms))) {
   const pct = mode === "min" ? (shownToday ? 100 : 0) : fullPct;
   const complete = mode === "min" ? shownToday : planLessons.length > 0 && planLessons.every(isDone);
 
+  // Weekend: a morning block and an afternoon block. Weekday (or bad-day
+  // mode, which is one lesson): null, meaning one sitting, all in one go.
+  const halves = mode === "min" ? null : P.splitSessions(planLessons, t);
+  const block = (ls) => {
+    const left = ls.filter((l) => !isDone(l));
+    return { lessons: ls, min: P.sumEffort(ls), left, leftMin: P.sumEffort(left), done: left.length === 0 };
+  };
+  const sessions = halves ? { am: block(halves.am), pm: block(halves.pm) } : null;
+
   return {
     t, s, plan, planLessons, byDay, active, ctx, finishedOn, remaining, mode,
     next: planLessons.find((l) => !isDone(l)),
-    planDone, doneMin, pct, complete,
+    planDone, doneMin, pct, complete, sessions,
     leftLessons: planLessons.filter((l) => !isDone(l)),
     doneToday, shownToday,
     finished: plan.lessonsRemaining === 0,
@@ -82,12 +91,16 @@ export function dayFacts(state, t, keyOf = (ms) => P.dayKey(new Date(ms))) {
   };
 }
 
-// The midday email fires the moment you're halfway (by lessons or by minutes,
-// whichever comes first), or when the day is done. "5 of 10" counts.
+// When ticking a lesson sends the midday email early (instead of waiting for
+// the mid-afternoon fallback):
+// - Weekend: the moment the morning block is done. That email hands you the
+//   afternoon block.
+// - Weekday: one sitting, so no email interrupts it halfway. It fires once
+//   the whole day is done.
+// Bad-day mode is one lesson: done or not.
 export function reachedHalfway(F) {
   if (F.finished || F.rest) return false;
   if (F.complete) return true;
-  if (F.mode === "min") return false; // bad-day mode is one lesson: done or not
-  const n = F.planLessons.length;
-  return n > 0 && (F.planDone.length * 2 >= n || F.pct >= 50);
+  if (F.mode === "min") return false;
+  return !!F.sessions?.am.done;
 }

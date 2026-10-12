@@ -4,6 +4,7 @@ import * as H from "./habits.js";
 import * as Sync from "./sync.js";
 import * as FX from "./feedback.js";
 import * as D from "./digest.js";
+import * as Cheers from "./cheers.js";
 import { fresh, normalize } from "./state.js";
 import { PRINCIPLES, LAW_NAMES, pickPrinciple } from "./principles.js";
 
@@ -299,18 +300,29 @@ function viewToday() {
 
   const ritualCard = !complete && pct === 0 && s.ritual.length ? ritualSection("Before you start: your ritual") : "";
 
-  const groups = [...new Set(planLessons.map((l) => l.course))]
-    .map((cid) => {
-      const c = COURSE[cid];
-      const ls = planLessons.filter((l) => l.course === cid);
-      return `<div class="group-label">${courseChip(c)} <span>${esc(c.instructor)}</span></div>
-        ${ls.map((l) => lessonRow(l, { current: next && l.id === next.id })).join("")}`;
-    })
-    .join("");
+  const byCourse = (ls) =>
+    [...new Set(ls.map((l) => l.course))]
+      .map((cid) => {
+        const c = COURSE[cid];
+        return `<div class="group-label">${courseChip(c)} <span>${esc(c.instructor)}</span></div>
+        ${ls.filter((l) => l.course === cid).map((l) => lessonRow(l, { current: next && l.id === next.id })).join("")}`;
+      })
+      .join("");
+  // Weekends: a morning block and an afternoon block. Weekdays: one sitting.
+  const blockHead = (name, b) =>
+    `<div class="block-label"><b>${b.done ? "✓ " : ""}${name}</b><span>${b.lessons.length - b.left.length}/${b.lessons.length} · ${fmtMin(b.min)}</span></div>`;
+  const groups = F.sessions
+    ? `${blockHead("Morning block", F.sessions.am)}${byCourse(F.sessions.am.lessons)}${blockHead("Afternoon block", F.sessions.pm)}${byCourse(F.sessions.pm.lessons)}`
+    : byCourse(planLessons);
+  const howHint = mode === "min"
+    ? ""
+    : F.sessions
+      ? `<p class="small muted" style="margin:0 0 10px">Weekend: about half in the morning, the rest in the afternoon. Finishing the morning block sends you the afternoon one by email.</p>`
+      : `<p class="small muted" style="margin:0 0 10px">Weekday: one sitting. ${esc(s.when)} at ${esc(s.where)}, all of it in one go.</p>`;
 
   const list = planLessons.length
     ? `<section class="card ${mode === "min" ? "dimmed" : ""}"><h2>Today's checklist <span class="right">${planLessons.filter(isDone).length}/${planLessons.length} · ${fmtMin(plan.targetMin)}</span></h2>
-        ${mode === "min" ? `<p class="small muted" style="margin:0 0 10px">Bad-day mode: only one lesson counts today. Everything else here rolls into the coming days automatically. No guilt, no debt: just don't make it two bad days.</p>` : ""}
+        ${mode === "min" ? `<p class="small muted" style="margin:0 0 10px">Bad-day mode: only one lesson counts today. Everything else here rolls into the coming days automatically. No guilt, no debt: just don't make it two bad days.</p>` : howHint}
         <div class="lessons">${groups}</div>
         <p class="small faint" style="margin:12px 0 0">Math first while your brain is fresh, then code. Exercises marked <b>Solve first</b> count only if you attempt them before the answer.</p>
       </section>`
@@ -1104,14 +1116,29 @@ function timer(op, id) {
 
 // ---------- actions
 
-const CHEERS = [
-  "Vote cast. +1 for future you.",
-  "Locked in. Next.",
-  "One more clip in the jar.",
-  "That's how olympiad brains get built.",
-  "Momentum. Don't stop now.",
-  "Done is a habit. You're building it.",
-];
+// Which cheers this device has already shown, so they cycle without repeats
+// (js/cheers.js). Per device on purpose: it's not progress, so it doesn't sync.
+const CHEER_KEY = "goals.cheers";
+const cheerMem = Cheers.memoryStore();
+const cheerStore = {
+  get(k) {
+    try {
+      return JSON.parse(localStorage.getItem(CHEER_KEY) || "{}")[k];
+    } catch {
+      return cheerMem.get(k);
+    }
+  },
+  set(k, v) {
+    cheerMem.set(k, v);
+    try {
+      const all = JSON.parse(localStorage.getItem(CHEER_KEY) || "{}");
+      all[k] = v;
+      localStorage.setItem(CHEER_KEY, JSON.stringify(all));
+    } catch {
+      /* storage blocked: memory still cycles for this session */
+    }
+  },
+};
 const lockSkipped = new Set();
 
 function toggle(id, el) {
@@ -1120,6 +1147,7 @@ function toggle(id, el) {
   const before = dayComplete(facts());
   let timerWasRunning = false;
   let speed = false;
+  let measured = null;
   if (wasDone) {
     delete state.completed[id];
     delete state.tickAt[id];
@@ -1133,7 +1161,7 @@ function toggle(id, el) {
     const ses = state.session;
     if (ses && ses.id === id) {
       const ms = elapsed(ses);
-      if (ms >= 60000) state.actual[id] = Math.round(ms / 60000);
+      if (ms >= 60000) measured = state.actual[id] = Math.round(ms / 60000);
       timerWasRunning = ses.running;
       state.session = null;
     }
@@ -1150,23 +1178,19 @@ function toggle(id, el) {
     if (r) burst(r.left + r.width / 2, r.top + r.height / 2, 28);
     const after = dayComplete(F);
     const prior = state.celebrated[t] === true ? "full" : state.celebrated[t];
+    const c = Cheers.cheerContext(F, BY_ID[id], { actualMin: measured });
     if (after && !before && prior !== "full" && !(F.mode === "min" && prior === "min")) {
       state.celebrated[t] = F.mode;
       setTimeout(() => {
         bigCelebration(F.mode === "min" ? 0.5 : 1);
         FX.fanfare();
       }, 150);
-      toast(
-        F.mode === "min"
-          ? "Minimum done on a bad day. You showed up. That's the identity."
-          : state.settings.bundle
-            ? `Day complete. Reward unlocked: ${state.settings.bundle}`
-            : "Day complete. Chain unbroken. 🔥"
-      );
+      toast(F.mode === "min" ? "Minimum done on a bad day. You showed up. That's the identity." : Cheers.cheer(c, cheerStore, { kind: "complete" }));
     } else if (speed) {
+      // Honesty first: a 30-second tick on a 20-minute lesson gets no applause.
       toast("That was fast. A tick isn't learning. Can you say its core idea?");
     } else {
-      toast(CHEERS[Math.floor(Math.random() * CHEERS.length)]);
+      toast(Cheers.cheer(c, cheerStore));
     }
     save();
     checkMilestones();
@@ -1360,11 +1384,11 @@ document.addEventListener("click", (e) => {
     const email = a.dataset.resend ? pendingEmail : ($("#syncEmail")?.value || "").trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Enter a valid email.");
     a.disabled = true;
-    Sync.signIn(email).then(({ error, via }) => {
+    Sync.signIn(email).then(({ error }) => {
       a.disabled = false;
       if (error) return toast(`Couldn't send: ${error}`);
       pendingEmail = email;
-      toast(via === "gmail" ? "Code sent. Check your email." : "Check your email for a code or a login link.");
+      toast("Code sent. Check your email.");
       render();
       $("#syncCode")?.focus();
     });
@@ -1559,7 +1583,7 @@ function nextToast() {
   setTimeout(() => {
     el.classList.remove("show");
     setTimeout(nextToast, 250);
-  }, toastQ.length ? 1800 : 2600);
+  }, Math.min(4500, (toastQ.length ? 2000 : 2600) + Math.max(0, item.msg.length - 50) * 30)); // long cheers stay readable
 }
 
 // ---------- confetti (tiny, dependency free)
