@@ -4,7 +4,7 @@ import { fresh } from "../js/state.js";
 import { dayFacts, reachedHalfway, zonedParts, LESSONS } from "../js/digest.js";
 import { compose, composePartner } from "../js/emails.js";
 import { dueSlots, nudgeAllowed, windows } from "../js/schedule.js";
-import { parseList } from "../api/_lib/env.js";
+import { parseList, emailHours } from "../api/_lib/env.js";
 import { PRINCIPLES, rotation, pickPrinciple } from "../js/principles.js";
 import * as P from "../js/planner.js";
 
@@ -263,3 +263,17 @@ function check2(mail) {
   assert.ok(!mail.html.includes("#today"), "partners get no app links (they can't sign in)");
   return mail;
 }
+
+test("emailHours: out-of-order or invalid hours fall back loudly, never to an empty window", () => {
+  const w = [];
+  assert.deepEqual(emailHours({}, w), { morningHour: 7, middayHour: 14, eveningHour: 20 });
+  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "6", EMAIL_EVENING_HOUR: "21" }, w), { morningHour: 6, middayHour: 14, eveningHour: 21 });
+  assert.equal(w.length, 0);
+  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "8", EMAIL_MIDDAY_HOUR: "7" }, w), { morningHour: 7, middayHour: 14, eveningHour: 20 });
+  assert.match(w[0], /morning < midday < evening/);
+  assert.deepEqual(emailHours({ EMAIL_EVENING_HOUR: "8pm" }, w).eveningHour, 20);
+  assert.match(w[1], /"8pm" is not a whole hour/);
+  for (const env of [{}, { EMAIL_MORNING_HOUR: "12", EMAIL_MIDDAY_HOUR: "13", EMAIL_EVENING_HOUR: "14" }]) {
+    for (const [a, b] of Object.values(windows(emailHours(env)))) assert.ok(a < b, "every window is non-empty");
+  }
+});

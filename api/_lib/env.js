@@ -38,10 +38,6 @@ export function config() {
   const gmailUser = (env.GMAIL_USER || "").trim();
   const to = (env.EMAIL_TO || gmailUser).trim();
   const warnings = [];
-  const hour = (v, d) => {
-    const n = Number(v);
-    return Number.isInteger(n) && n >= 0 && n <= 23 ? n : d;
-  };
   return {
     gmailUser,
     // Google shows app passwords as "abcd efgh ijkl mnop"; the spaces aren't part of it.
@@ -62,10 +58,34 @@ export function config() {
     name: (env.GOALS_NAME || "").trim(),
     // Local hours (in GOALS_TZ). Each slot sends at the first hourly check
     // inside its window, then never again that day.
-    morningHour: hour(env.EMAIL_MORNING_HOUR, 7),
-    middayHour: hour(env.EMAIL_MIDDAY_HOUR, 14),
-    eveningHour: hour(env.EMAIL_EVENING_HOUR, 20),
+    ...emailHours(env, warnings),
   };
+}
+
+export const DEFAULT_HOURS = { morningHour: 7, middayHour: 14, eveningHour: 20 };
+
+// Hours must be whole numbers 0-23 in order morning < midday < evening, or a
+// window comes out empty and that email silently never sends. Anything else
+// falls back to the defaults, loudly.
+export function emailHours(env, warnings = []) {
+  const read = (name, d) => {
+    const raw = env[name];
+    if (raw === undefined || String(raw).trim() === "") return d;
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 0 && n <= 23) return n;
+    warnings.push(`${name}: "${raw}" is not a whole hour 0-23, using ${d}.`);
+    return d;
+  };
+  const h = {
+    morningHour: read("EMAIL_MORNING_HOUR", DEFAULT_HOURS.morningHour),
+    middayHour: read("EMAIL_MIDDAY_HOUR", DEFAULT_HOURS.middayHour),
+    eveningHour: read("EMAIL_EVENING_HOUR", DEFAULT_HOURS.eveningHour),
+  };
+  if (!(h.morningHour < h.middayHour && h.middayHour < h.eveningHour)) {
+    warnings.push(`Email hours must go morning < midday < evening (got ${h.morningHour} / ${h.middayHour} / ${h.eveningHour}), using 7 / 14 / 20.`);
+    return { ...DEFAULT_HOURS };
+  }
+  return h;
 }
 
 // Names of required variables that are missing, so failures say exactly what to fix.
