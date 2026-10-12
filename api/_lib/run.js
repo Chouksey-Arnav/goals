@@ -52,6 +52,7 @@ export function buildEmail(cfg, slot, ctx) {
     syncedAt: ctx.syncedAt,
     dayIndex: diffDays(TRACK_START, ctx.day),
     state: ctx.state,
+    middayHour: cfg.middayHour,
   });
 }
 
@@ -108,6 +109,37 @@ export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
       .catch((e) => console.error("Sent, but could not record sent_at:", e.message));
   }
   return { slot, sent: true, subject: mail.subject, recipients: (addr.to ? 1 : 0) + addr.bcc.length, messageId: id };
+}
+
+// When the automated emails can't go out (database down, a key revoked, a
+// permission missing), say so by email instead of failing silently in a log
+// nobody reads. Sent only on runs at the start of a window (morning, midday,
+// evening hour), so an outage costs at most three alerts a day, and each one
+// lines up with an email you should have had. Gmail itself failing can't be
+// reported this way; that's what /api/cron?status=1 is for.
+export function isAlertHour(cfg, hour) {
+  return [cfg.morningHour, cfg.middayHour, cfg.eveningHour].includes(hour);
+}
+
+export async function sendAlert(cfg, { day, hour, errors }) {
+  const lines = errors.map((e) => `- ${e}`).join("\n");
+  const text = `Your automated Goals emails failed at ${hour}:00 on ${day}. The next hourly run retries on its own.\n\n${lines}\n\nCheck: ${cfg.appUrl}/api/cron?status=1&key=YOUR_CRON_SECRET`;
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  try {
+    await sendMail(cfg, {
+      to: cfg.to,
+      subject: "Goals: your daily emails are failing",
+      text,
+      html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.55;color:#1f2937;max-width:560px">
+        <p>Your automated Goals emails failed at <b>${hour}:00</b> on ${day}. The next hourly run retries on its own.</p>
+        <pre style="white-space:pre-wrap;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px;font-size:13px">${esc(lines)}</pre>
+        <p style="font-size:13px;color:#6b7280">Check status: ${esc(cfg.appUrl)}/api/cron?status=1&amp;key=YOUR_CRON_SECRET</p></div>`,
+    });
+    return true;
+  } catch (e) {
+    console.error("Could not send the failure alert either:", explainMailError(e));
+    return false;
+  }
 }
 
 export function json(res, status, body) {

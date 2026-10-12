@@ -101,6 +101,28 @@ export function planDay({ lessons, completed, today, settings }) {
   };
 }
 
+// How a day's plan is worked. Weekdays are one sitting: everything in one go.
+// Weekends are two blocks: about half the minutes in the morning, the rest in
+// the afternoon. The cut keeps plan order (math first) and picks the split
+// point closest to half the minutes; a tie gives the morning the extra,
+// while you're fresh. Fewer than two lessons can't be halved: one sitting.
+export function splitSessions(lessons, k) {
+  if (!isWeekend(k) || lessons.length < 2) return null;
+  const total = sumEffort(lessons);
+  let best = 1;
+  let bestGap = Infinity;
+  let acc = 0;
+  for (let i = 1; i < lessons.length; i++) {
+    acc += lessons[i - 1].effort;
+    const gap = Math.abs(acc - total / 2);
+    if (gap < bestGap || (gap === bestGap && i > best)) {
+      best = i;
+      bestGap = gap;
+    }
+  }
+  return { am: lessons.slice(0, best), pm: lessons.slice(best) };
+}
+
 // If you study exactly your stated capacity every day, when do you finish?
 export function projectFinish(total, today, settings, horizon = 365) {
   if (total <= 0) return today;

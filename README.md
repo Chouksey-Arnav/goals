@@ -54,12 +54,14 @@ The situation picks the idea: missed yesterday → *never miss twice*; nothing d
 
 ## Daily emails
 
-Three emails a day, written from your synced record, sent through your Gmail with Nodemailer:
+Three emails a day, written from your synced record, sent through your Gmail with Nodemailer.
+
+**Weekdays are one sitting**: the whole day's list in one go, at your planned time. **Weekends are two blocks**: about half the minutes in the morning (due by the midday hour), the rest in the afternoon. The split keeps plan order (math first) and cuts at the point closest to half the minutes. The Today tab shows the same two blocks.
 
 | Email | When | What it says |
 |---|---|---|
-| **Morning plan** | First hourly check after 7:00 local | The exact Up Next lesson, the full checklist with real-work minutes, your pace vs the deadline, the chain, and one Atomic Habits idea as a task. Leads with any unpaid contract breach. After a miss: *never miss twice*. |
-| **Midday check-in** | The moment you reach halfway (5 of 10 lessons, or 50% of the minutes), or 14:00 local if that never happens | "Halfway. 5 down, 5 to go." / "0 of 10 done. Two minutes, that's all." / "Day complete. Reward unlocked." |
+| **Morning plan** | First hourly check after 7:00 local | The exact Up Next lesson, the checklist with real-work minutes (weekdays: one sitting; weekends: morning block and afternoon block), your pace vs the deadline, the chain, and one Atomic Habits idea as a task. Leads with any unpaid contract breach. After a miss: *never miss twice*. |
+| **Midday check-in** | Weekend: the moment the morning block is done, or 14:00 local. Weekday: 14:00 local, or the moment the whole sitting is done (it never interrupts a sitting halfway) | Weekend: "Morning block done. Afternoon block: 9 lessons, ~2h 34m." / "Morning block: 2 lessons left. Finish it, then the afternoon." Weekday: "Today: 10 lessons, ~3h, one sitting. Prime it now." / "4 of 10 done. Same sitting: 6 to go." Either: "Day complete. Reward unlocked." |
 | **Evening wrap** | First hourly check after 20:00 local | Done: recap, identity vote, tomorrow's first lesson. Partial: what's left, honestly. Nothing: "your chain breaks at midnight", the minimum, and the contract cost if a second miss would breach it. |
 
 Rest days get a short morning note only. After the last lesson you get one celebration email, then they stop.
@@ -78,10 +80,15 @@ Everyone is BCC'd, so nobody sees anyone else's address, and the partner report 
 How it works:
 
 - **Schedule.** Vercel's free plan allows only daily crons, each firing somewhere in its hour. `vercel.json` registers 24 of them (one per UTC hour), and [`js/schedule.js`](js/schedule.js) decides which email is due in `GOALS_TZ`. Time zones and daylight saving need no code changes.
-- **Halfway trigger.** After each synced tick the app calls `POST /api/nudge`. The server checks that the session belongs to `EMAIL_TO`, re-reads your progress from the database and decides on its own.
-- **Exactly once.** Table `email_log` has one row per (recipient, day, slot). Inserting it is the claim, so a cron run and a nudge racing each other can't both send. A failed send releases the claim and the next hour retries. A sent email is never re-sent.
+- **Early midday trigger.** After each synced tick the app calls `POST /api/nudge` (weekend: morning block done; weekday: day done). The server checks that the session belongs to `EMAIL_TO`, re-reads your progress from the database and decides on its own.
+- **Exactly once.** Table `email_log` has one row per (recipient, day, slot). Inserting it is the claim, so a cron run and a nudge racing each other can't both send. A failed send releases the claim and the next hour retries. A sent email is never re-sent. If a run dies between claiming and sending (a timeout), the claim goes stale after 5 minutes and the next run sends it.
+- **Retries and alerts.** A Gmail hiccup (timeout, dropped connection, 4xx) gets one immediate retry on a fresh connection; a wrong password doesn't. If a scheduled run fails for any other reason (database, keys, permissions, config), you get a "your daily emails are failing" email with the exact error, at most at 7:00, 14:00 and 20:00, so an outage can't stay silent.
 - **Same plan as the app.** [`js/digest.js`](js/digest.js) computes "where do I stand" for both the Today tab and the emails, and [`js/state.js`](js/state.js) normalizes old saves for both.
-- **Sign-in codes through Gmail.** `POST /api/login-code` emails a 6-digit code via Nodemailer, because Supabase's built-in mailer only delivers to project team members. It only sends to `EMAIL_TO`, so strangers can't sign up. It's throttled to one code per 45 s and 10 per day.
+- **Sign-in codes through Gmail, only.** `POST /api/login-code` emails a 6-digit code via Nodemailer. The app never falls back to Supabase's built-in mailer, which only delivers to project team members; if the server can't send, you see its real error. It only sends to `EMAIL_TO`, so strangers can't sign up. It's throttled to one code per 45 s and 10 per day.
+
+### Database permissions
+
+The server reads `progress` and writes `email_log` with the secret key (`service_role`). This project has table auto-expose off, so those grants must be explicit: [`20261012030000_grant_service_role.sql`](supabase/migrations/20261012030000_grant_service_role.sql). Without them every server call fails with `Supabase 403 ... permission denied for table progress`, and the error message now says which file to run.
 
 ### Environment variables (Vercel → Settings → Environment Variables, Production)
 
@@ -93,7 +100,7 @@ How it works:
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Supabase → Project Settings → API Keys → **secret** key (`sb_secret_…`). Server only, never in `js/`. |
 | `CRON_SECRET` | yes | A long random string (`openssl rand -hex 32`). Vercel sends it with every cron call. |
 | `GOALS_TZ` | yes | Your IANA time zone, e.g. `America/New_York`, `America/Chicago`, `America/Los_Angeles` |
-| `APP_URL` | no | Defaults to `https://goals-taupe-six.vercel.app` |
+| `APP_URL` | no | Defaults to `https://goalsforarnav.vercel.app`. Must be the address you actually use: sign-in and local progress belong to one address, so links to another alias open an empty, signed-out app. |
 | `EMAIL_CC` | no | Up to 15 comma-separated addresses that get copies of your 3 daily emails |
 | `PARTNER_EMAILS` | no | Up to 15 comma-separated accountability partners for the morning partner report |
 | `GOALS_NAME` | no | Your first name, used in the greeting and in partner report subjects. Defaults to the first name on your signed contract. Set it if you have partners, or reports say "Goals check-in". |
@@ -121,7 +128,7 @@ The System tab lists what the two courses do **not** cover (PyTorch, CNNs, trans
 
 ## Data and sync
 
-Progress is saved in the browser first. Signing in (email login link) syncs it through Supabase so a phone and a laptop stay in step. Whichever copy was changed most recently wins.
+Progress is saved in the browser first. Signing in (a 6-digit code by email) syncs it through Supabase so a phone and a laptop stay in step. Whichever copy was changed most recently wins.
 
 Security model: table `public.progress` holds one JSON row per user. Row Level Security is on, and the only policies let a signed-in user read, insert and update **their own** row. Anonymous visitors have no grants at all. The publishable key in `js/config.js` is meant to be public. Tables `email_log` and `login_throttle` (see [`supabase/migrations`](supabase/migrations)) have RLS on, no policies and no grants, so only the server's secret key can touch them.
 

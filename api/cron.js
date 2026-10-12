@@ -10,7 +10,7 @@
 //   /api/cron?status=1&key=SECRET              what's been sent today, and config check
 
 import { timingSafeEqual } from "node:crypto";
-import { config, missing, loadDay, sendSlot, buildEmail, json } from "./_lib/run.js";
+import { config, missing, loadDay, sendSlot, buildEmail, json, nowIn, isAlertHour, sendAlert } from "./_lib/run.js";
 import { slotsSent } from "./_lib/supabase.js";
 import { dueSlots, windows } from "../js/schedule.js";
 
@@ -30,9 +30,22 @@ export default async function handler(req, res) {
   const gaps = missing(cfg, ["mail", "db", "cron"]);
   if (!cfg.cronSecret) return json(res, 500, { error: "CRON_SECRET is not set.", missing: gaps });
   if (!authorized(req, cfg.cronSecret)) return json(res, 401, { error: "Unauthorized." });
-  if (gaps.length) return json(res, 500, { error: "Missing configuration.", missing: gaps });
-
   const q = new URL(req.url, "http://x").searchParams;
+  // Only the scheduled runs alert; a manual ?slot= or ?status= call shows the error itself.
+  const scheduled = !q.get("slot") && !q.get("status") && !q.get("dry");
+  const alert = async (errors) => {
+    try {
+      const { day, hour } = nowIn(cfg);
+      if (scheduled && isAlertHour(cfg, hour)) await sendAlert(cfg, { day, hour, errors });
+    } catch (e) {
+      console.error("Alert skipped:", e.message);
+    }
+  };
+  if (gaps.length) {
+    if (cfg.gmailUser && cfg.gmailPass) await alert([`Missing or invalid configuration: ${gaps.join(", ")}`]);
+    return json(res, 500, { error: "Missing configuration.", missing: gaps });
+  }
+
   const slotParam = q.get("slot");
   if (slotParam && !SLOTS.includes(slotParam)) return json(res, 400, { error: `slot must be one of ${SLOTS.join(", ")}` });
 
@@ -83,9 +96,11 @@ export default async function handler(req, res) {
     }
     console.log(JSON.stringify({ at: new Date().toISOString(), day: ctx.day, hour: ctx.hour, results }));
     const failed = results.some((r) => r.error);
+    if (failed) await alert(results.filter((r) => r.error).map((r) => `${r.slot} email: ${r.error}`));
     return json(res, failed ? 502 : 200, slotParam ? results[0] : { results, warnings: cfg.warnings });
   } catch (e) {
     console.error(e);
+    await alert([String(e.message || e)]);
     return json(res, e.status && e.status < 600 ? e.status : 500, { error: String(e.message || e) });
   }
 }

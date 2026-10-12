@@ -7,7 +7,8 @@
 //
 // Windows (local hours, half-open):
 //   morning  [morningHour, min(morningHour + 5, middayHour))
-//   midday   [middayHour, eveningHour)   fallback if halfway never triggered it
+//   midday   [middayHour, eveningHour)   fallback if /api/nudge didn't send it
+//            early (weekends: morning block done; weekdays: whole sitting done)
 //   evening  [eveningHour, 24)
 //   partner  same window as morning: yesterday's record, once it's final
 // Each slot sends at most once per day (enforced by the email_log table).

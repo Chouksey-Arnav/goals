@@ -39,6 +39,7 @@ export default async function handler(req, res) {
       appUrl: cfg.appUrl,
       syncedAt: ctx.syncedAt,
       dayIndex: diffDays(TRACK_START, ctx.day),
+      middayHour: cfg.middayHour,
     }, n);
     const addr = addressing(cfg, "morning");
     try {

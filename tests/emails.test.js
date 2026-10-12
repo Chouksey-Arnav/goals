@@ -5,6 +5,9 @@ import { dayFacts, reachedHalfway, zonedParts, LESSONS } from "../js/digest.js";
 import { compose, composePartner, composeBoost, boostPrinciple } from "../js/emails.js";
 import { dueSlots, nudgeAllowed, windows } from "../js/schedule.js";
 import { parseList, emailHours } from "../api/_lib/env.js";
+import { isAuthError } from "../api/_lib/mailer.js";
+import { hint, isStale, STALE_MIN } from "../api/_lib/supabase.js";
+import { isAlertHour } from "../api/_lib/run.js";
 import { PRINCIPLES, rotation, pickPrinciple } from "../js/principles.js";
 import * as P from "../js/planner.js";
 
@@ -64,13 +67,50 @@ test("nudgeAllowed: after the morning email, before the evening one, once", () =
   assert.equal(nudgeAllowed(20, { morning: {} }, CFG), false, "evening window: the evening email covers it");
 });
 
-test("reachedHalfway: 5 of 10 counts, by lessons or minutes", () => {
+const SAT = "2026-10-17";
+const SUN = "2026-10-18";
+
+test("reachedHalfway, weekday: one sitting, so only a finished day sends early", () => {
   const n = dayFacts(fresh(), T).planLessons.length;
   assert.ok(n >= 2, `plan has ${n} lessons`);
+  assert.equal(dayFacts(fresh(), T).sessions, null, "weekdays are one sitting");
   assert.equal(reachedHalfway(dayFacts(withDone(0), T)), false);
-  assert.equal(reachedHalfway(dayFacts(withDone(Math.ceil(n / 2)), T)), true);
-  assert.equal(reachedHalfway(dayFacts(withDone(n), T)), true, "done counts too");
+  assert.equal(reachedHalfway(dayFacts(withDone(n - 1), T)), false, "never interrupts the sitting");
+  assert.equal(reachedHalfway(dayFacts(withDone(n), T)), true, "done counts");
   assert.equal(reachedHalfway(dayFacts(withDone(0, { mode: "min" }), T)), false);
+});
+
+test("reachedHalfway, weekend: fires the moment the morning block is done", () => {
+  const F0 = dayFacts(fresh(), SAT);
+  const k = F0.sessions.am.lessons.length;
+  assert.equal(reachedHalfway(dayFacts(withDone(k - 1, { day: SAT }), SAT)), false);
+  assert.equal(reachedHalfway(dayFacts(withDone(k, { day: SAT }), SAT)), true);
+  // Ticking afternoon lessons first doesn't count: the morning block isn't done.
+  const s = fresh();
+  F0.sessions.pm.lessons.forEach((l) => (s.completed[l.id] = SAT));
+  assert.equal(reachedHalfway(dayFacts(s, SAT)), false);
+});
+
+test("splitSessions: weekends split the minutes in half, in plan order; weekdays never split", () => {
+  for (const day of [SAT, SUN]) {
+    const F = dayFacts(fresh(), day);
+    const { am, pm } = F.sessions;
+    assert.ok(am.lessons.length && pm.lessons.length, "both blocks have work");
+    assert.deepEqual([...am.lessons, ...pm.lessons].map((l) => l.id), F.plan.ids, "order kept, nothing lost or repeated");
+    assert.equal(am.min + pm.min, F.plan.targetMin);
+    // No other cut point is closer to half the minutes.
+    const half = F.plan.targetMin / 2;
+    let acc = 0;
+    const gaps = F.planLessons.slice(0, -1).map((l) => Math.abs((acc += l.effort) - half));
+    assert.equal(Math.abs(am.min - half), Math.min(...gaps));
+  }
+  const ls = (...m) => m.map((effort, i) => ({ id: `x${i}`, effort }));
+  assert.equal(P.splitSessions(ls(30, 30), T), null, "Wednesday: one sitting");
+  assert.equal(P.splitSessions(ls(30), SAT), null, "one lesson can't be halved");
+  assert.deepEqual(P.splitSessions(ls(30, 30), SAT).am.map((l) => l.id), ["x0"]);
+  assert.deepEqual(P.splitSessions(ls(10, 20, 10), SAT).am.map((l) => l.id), ["x0", "x1"], "a tie gives the morning the extra");
+  assert.deepEqual(P.splitSessions(ls(100, 10, 10, 10), SAT).am.map((l) => l.id), ["x0"], "minutes, not lesson count");
+  assert.equal(dayFacts(withDone(0, { day: SAT, mode: "min" }), SAT).sessions, null, "bad-day mode is one lesson");
 });
 
 test("dayFacts matches the planner exactly", () => {
@@ -95,7 +135,9 @@ test("morning: plan, next lesson, idea, pace", () => {
   const s = showUp(fresh(), ["2026-10-11", "2026-10-12", "2026-10-13"]);
   const F = dayFacts(s, T);
   const m = check(compose("morning", F, ctx(s)));
-  assert.match(m.subject, /^Wednesday: \d+ lessons, ~/);
+  assert.match(m.subject, /^Wednesday: \d+ lessons, ~.*, one sitting\. Start with/);
+  assert.match(m.text, /in one go/);
+  assert.match(m.text, /Today's checklist · one sitting/);
   assert.ok(m.text.includes(F.next.title), "names the exact next lesson");
   assert.ok(m.text.includes("Good morning, Sam."));
   assert.ok(m.text.includes("You've got this"));
@@ -125,17 +167,57 @@ test("morning with an unpaid contract breach leads with it", () => {
   assert.match(m.text, /You owe Alex \$10/);
 });
 
-test("midday: zero done, halfway, and complete read differently", () => {
+test("midday, weekday: one sitting, not started / mid-sitting / complete", () => {
   const n = dayFacts(fresh(), T).planLessons.length;
   const zero = check(compose("midday", dayFacts(fresh(), T), ctx(fresh())));
-  assert.match(zero.subject, /^0 of \d+ done/);
+  assert.match(zero.subject, /^Today: \d+ lessons, ~.*, one sitting\. Prime it now\./);
   const half = withDone(Math.ceil(n / 2));
   const h = check(compose("midday", dayFacts(half, T), ctx(half)));
-  assert.match(h.subject, new RegExp(`^Halfway\\. ${Math.ceil(n / 2)} down, ${n - Math.ceil(n / 2)} to go`));
+  assert.match(h.subject, new RegExp(`^${Math.ceil(n / 2)} of ${n} done\\. Same sitting: ${n - Math.ceil(n / 2)} to go`));
+  assert.match(h.text, /in one go/);
   const all = withDone(n);
   all.settings.bundle = "A 20 minute walk outside";
   const c = check(compose("midday", dayFacts(all, T), ctx(all)));
   assert.match(c.subject, /Reward unlocked: A 20 minute walk/);
+});
+
+// Saturday with a 6-day chain behind it, k lessons into today's plan.
+function sat(k) {
+  const s = showUp(fresh(), ["2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"]);
+  dayFacts(s, SAT).planLessons.slice(0, k).forEach((l) => (s.completed[l.id] = SAT));
+  return s;
+}
+
+test("weekend emails: morning plan in two blocks, afternoon handoff, block-aware push", () => {
+  const c = { ...ctx(sat(0)), middayHour: 14 };
+  const F0 = dayFacts(sat(0), SAT);
+  const { am, pm } = F0.sessions;
+  const m = check(compose("morning", F0, c));
+  assert.match(m.subject, new RegExp(`^Saturday: ${am.lessons.length} lessons? this morning, ${pm.lessons.length} this afternoon\\.`));
+  assert.match(m.text, /Morning block · ~.* · done by 2 pm:/);
+  assert.match(m.text, /Afternoon block · ~/);
+  assert.ok(m.text.indexOf(am.lessons[0].title) < m.text.indexOf(pm.lessons[0].title));
+
+  const z = check(compose("midday", F0, c));
+  assert.match(z.subject, /^0 of \d+ done\. Start the morning block now/);
+  assert.match(z.text, /was due by 2 pm/);
+
+  const mid = sat(1);
+  const p = check(compose("midday", dayFacts(mid, SAT), c));
+  assert.match(p.subject, /^Morning block: \d+ lessons? left\. Finish it, then the afternoon\./);
+
+  const amDone = sat(am.lessons.length);
+  const Fa = dayFacts(amDone, SAT);
+  const h = check(compose("midday", Fa, { ...c, state: amDone }));
+  assert.match(h.subject, new RegExp(`^Morning block done\\. Afternoon block: ${pm.lessons.length} lessons?, ~`));
+  assert.ok(h.text.includes(pm.lessons[0].title), "hands over the first afternoon lesson");
+
+  const b = composeBoost(Fa, c, 1);
+  assert.match(b.subject, /^⚡ Afternoon block: /);
+  const b0 = composeBoost(dayFacts(mid, SAT), c, 1);
+  assert.match(b0.subject, /^⚡ Morning block: /);
+  const e = check(compose("evening", dayFacts(amDone, SAT), { ...c, state: amDone }));
+  assert.match(e.text, /what's left is the afternoon block/);
 });
 
 test("evening: chain warning, partial, and wrap with tomorrow's plan", () => {
@@ -305,4 +387,22 @@ test("boost: 8 presses, 8 different ideas, none repeating this morning's", () =>
       assert.ok(!ids.includes(morning), `day ${d} repeats the morning idea ${morning}`);
     }
   }
+});
+
+test("failures: auth errors aren't retried, outages alert only at window starts, 403s explain the fix", () => {
+  assert.equal(isAuthError({ code: "EAUTH", message: "Invalid login: 535-5.7.8 Username and Password not accepted" }), true);
+  assert.equal(isAuthError({ code: "ETIMEDOUT", message: "Connection timeout" }), false, "timeouts get the retry");
+  assert.equal(isAuthError({ code: "EENVELOPE", message: "421 4.7.0 Try again later" }), false);
+  const hours = Array.from({ length: 24 }, (_, h) => h).filter((h) => isAlertHour(CFG, h));
+  assert.deepEqual(hours, [7, 14, 20], "at most three alerts a day");
+  assert.match(hint(403, "permission denied for table progress"), /grant_service_role\.sql/);
+  assert.match(hint(401, "Invalid API key"), /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.equal(hint(500, "boom"), "");
+  // A run that died between claiming and sending frees the slot after STALE_MIN.
+  const now = Date.parse("2026-10-12T20:30:00Z");
+  const ago = (m) => new Date(now - m * 60_000).toISOString();
+  assert.equal(isStale({ claimed_at: ago(STALE_MIN + 1), sent_at: null }, now), true);
+  assert.equal(isStale({ claimed_at: ago(1), sent_at: null }, now), false, "in flight: leave it alone");
+  assert.equal(isStale({ claimed_at: ago(600), sent_at: ago(599) }, now), false, "sent is sent");
+  assert.ok(STALE_MIN * 60 > 60, "longer than a function can run (maxDuration 60s)");
 });

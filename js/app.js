@@ -299,18 +299,29 @@ function viewToday() {
 
   const ritualCard = !complete && pct === 0 && s.ritual.length ? ritualSection("Before you start: your ritual") : "";
 
-  const groups = [...new Set(planLessons.map((l) => l.course))]
-    .map((cid) => {
-      const c = COURSE[cid];
-      const ls = planLessons.filter((l) => l.course === cid);
-      return `<div class="group-label">${courseChip(c)} <span>${esc(c.instructor)}</span></div>
-        ${ls.map((l) => lessonRow(l, { current: next && l.id === next.id })).join("")}`;
-    })
-    .join("");
+  const byCourse = (ls) =>
+    [...new Set(ls.map((l) => l.course))]
+      .map((cid) => {
+        const c = COURSE[cid];
+        return `<div class="group-label">${courseChip(c)} <span>${esc(c.instructor)}</span></div>
+        ${ls.filter((l) => l.course === cid).map((l) => lessonRow(l, { current: next && l.id === next.id })).join("")}`;
+      })
+      .join("");
+  // Weekends: a morning block and an afternoon block. Weekdays: one sitting.
+  const blockHead = (name, b) =>
+    `<div class="block-label"><b>${b.done ? "✓ " : ""}${name}</b><span>${b.lessons.length - b.left.length}/${b.lessons.length} · ${fmtMin(b.min)}</span></div>`;
+  const groups = F.sessions
+    ? `${blockHead("Morning block", F.sessions.am)}${byCourse(F.sessions.am.lessons)}${blockHead("Afternoon block", F.sessions.pm)}${byCourse(F.sessions.pm.lessons)}`
+    : byCourse(planLessons);
+  const howHint = mode === "min"
+    ? ""
+    : F.sessions
+      ? `<p class="small muted" style="margin:0 0 10px">Weekend: about half in the morning, the rest in the afternoon. Finishing the morning block sends you the afternoon one by email.</p>`
+      : `<p class="small muted" style="margin:0 0 10px">Weekday: one sitting. ${esc(s.when)} at ${esc(s.where)}, all of it in one go.</p>`;
 
   const list = planLessons.length
     ? `<section class="card ${mode === "min" ? "dimmed" : ""}"><h2>Today's checklist <span class="right">${planLessons.filter(isDone).length}/${planLessons.length} · ${fmtMin(plan.targetMin)}</span></h2>
-        ${mode === "min" ? `<p class="small muted" style="margin:0 0 10px">Bad-day mode: only one lesson counts today. Everything else here rolls into the coming days automatically. No guilt, no debt: just don't make it two bad days.</p>` : ""}
+        ${mode === "min" ? `<p class="small muted" style="margin:0 0 10px">Bad-day mode: only one lesson counts today. Everything else here rolls into the coming days automatically. No guilt, no debt: just don't make it two bad days.</p>` : howHint}
         <div class="lessons">${groups}</div>
         <p class="small faint" style="margin:12px 0 0">Math first while your brain is fresh, then code. Exercises marked <b>Solve first</b> count only if you attempt them before the answer.</p>
       </section>`
@@ -1360,11 +1371,11 @@ document.addEventListener("click", (e) => {
     const email = a.dataset.resend ? pendingEmail : ($("#syncEmail")?.value || "").trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Enter a valid email.");
     a.disabled = true;
-    Sync.signIn(email).then(({ error, via }) => {
+    Sync.signIn(email).then(({ error }) => {
       a.disabled = false;
       if (error) return toast(`Couldn't send: ${error}`);
       pendingEmail = email;
-      toast(via === "gmail" ? "Code sent. Check your email." : "Check your email for a code or a login link.");
+      toast("Code sent. Check your email.");
       render();
       $("#syncCode")?.focus();
     });
