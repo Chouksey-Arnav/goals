@@ -1,4 +1,117 @@
 {
   "cleanUrls": true,
-  "headers": [{ "source": "/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] }]
+  "headers": [
+    {
+      "source": "/((?!api/).*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron?utc=00",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron?utc=01",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron?utc=02",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron?utc=03",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron?utc=04",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron?utc=05",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron?utc=06",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron?utc=07",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron?utc=08",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron?utc=09",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron?utc=10",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron?utc=11",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron?utc=12",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron?utc=13",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron?utc=14",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron?utc=15",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron?utc=16",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron?utc=17",
+      "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/cron?utc=18",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron?utc=19",
+      "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/cron?utc=20",
+      "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/cron?utc=21",
+      "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/cron?utc=22",
+      "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/cron?utc=23",
+      "schedule": "0 23 * * *"
+    }
+  ],
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 30
+    }
+  }
 }

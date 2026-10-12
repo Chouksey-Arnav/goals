@@ -12,7 +12,7 @@ const SDK = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/+esm";
 let client = null;
 let user = null;
 let pushTimer = null;
-let hooks = { getState: () => null, setState: () => {}, onStatus: () => {} };
+let hooks = { getState: () => null, setState: () => {}, onStatus: () => {}, onPushed: () => {} };
 
 export const status = { enabled: !!(SUPABASE_URL && SUPABASE_KEY), ready: false, email: null, lastSync: null, error: null, busy: false };
 
@@ -49,13 +49,52 @@ export async function initSync(h) {
   }
 }
 
+// Step 1 of sign-in: a 6-digit code by email. The server sends it through
+// Gmail (api/login-code.js). If that route isn't deployed or configured,
+// fall back to Supabase's own mailer, which also includes a login link.
 export async function signIn(email) {
   if (!client) return { error: "Sync is not set up." };
+  try {
+    const res = await fetch("/api/login-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (res.ok) return { error: null, via: "gmail" };
+    const body = await res.json().catch(() => ({}));
+    if (res.status !== 404 && res.status !== 503) return { error: body.error || `Error ${res.status}` };
+  } catch {
+    /* offline or no server: fall through */
+  }
   const { error } = await client.auth.signInWithOtp({
     email,
     options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true },
   });
-  return { error: error?.message || null };
+  return { error: error?.message || null, via: "supabase" };
+}
+
+// Step 2: the code from the email. Works in an installed home-screen app,
+// where tapping a login link would open the browser instead.
+export async function verifyCode(email, code) {
+  if (!client) return { error: "Sync is not set up." };
+  let { error } = await client.auth.verifyOtp({ email, token: code, type: "email" });
+  if (error) ({ error } = await client.auth.verifyOtp({ email, token: code, type: "magiclink" }));
+  return { error: error ? "That code is wrong or expired. Request a new one." : null };
+}
+
+// Ask the server to send the midday email if you've just reached halfway.
+// The server re-checks everything from the database; this is only a hint.
+export async function nudge() {
+  if (!client || !user) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return null;
+    const res = await fetch("/api/nudge", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    return await res.json().catch(() => null);
+  } catch {
+    return null;
+  }
 }
 
 export async function signOut() {
@@ -106,6 +145,7 @@ export function schedulePush() {
       await write(hooks.getState());
       status.lastSync = new Date();
       status.error = null;
+      hooks.onPushed();
     } catch {
       status.error = "Sync failed. Your progress is still saved on this device.";
     }
