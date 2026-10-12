@@ -597,3 +597,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); margin: 8px 0 12
   .contract-doc { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; background: #fff; }
   .bg-glow, .tabs, #confetti, .toast { display: none; }
 }
+
+/* "Send me motivation" */
+.boost-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.boost-card .btn { flex-shrink: 0; }
+@media (max-width: 480px) { .boost-card { flex-direction: column; align-items: stretch; } }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.4); box-shadow: none; }

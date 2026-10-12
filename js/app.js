@@ -338,7 +338,15 @@ function viewToday() {
       </div>
     </section>`;
 
-  return `<div class="view">${banners.join("")}${hero}${lockCard}${nextCard}${ritualCard}${list}${rewardCard(F, complete)}${closeDayCard(F)}${aheadCard}${extraCard}${stats}</div>`;
+  // On-demand push: emails a motivation built from right now.
+  const boostCard = finished
+    ? ""
+    : `<section class="card boost-card">
+      <div><b>Need a push?</b><div class="small muted">${Sync.status.email ? "Emails you a push built from exactly where you stand right now: the next lesson, what's left, and a fresh Atomic Habits idea." : `Sign in under <a href="#settings">Settings</a> and this emails you a push built from where you stand right now.`}</div></div>
+      <button class="btn sm primary" data-action="boost" ${Sync.status.email ? "" : "disabled"}>⚡ Send me motivation</button>
+    </section>`;
+
+  return `<div class="view">${banners.join("")}${hero}${lockCard}${nextCard}${boostCard}${ritualCard}${list}${rewardCard(F, complete)}${closeDayCard(F)}${aheadCard}${extraCard}${stats}</div>`;
 }
 
 // Immediate reinforcement, and its handover to identity.
@@ -996,6 +1004,7 @@ function viewSettings() {
 }
 
 let pendingEmail = "";
+let lastSyncEmail = null;
 function syncCard() {
   const st = Sync.status;
   let body;
@@ -1373,6 +1382,16 @@ document.addEventListener("click", (e) => {
   } else if (act === "signin-cancel") {
     pendingEmail = "";
     render();
+  } else if (act === "boost") {
+    a.disabled = true;
+    a.textContent = "Sending…";
+    Sync.boost().then((r) => {
+      a.disabled = false;
+      a.textContent = "⚡ Send me motivation";
+      if (r?.error) return toast(r.error);
+      FX.sparkle();
+      toast(`📬 Sent to ${r.recipients > 1 ? `${r.recipients} inboxes` : "your inbox"}. Now open the lesson. Don't wait for the email.`);
+    });
   } else if (act === "signout") Sync.signOut().then(() => toast("Signed out. Progress stays on this device."));
   else if (act === "syncnow") Sync.reconcile().then(() => toast(Sync.status.error || "Synced."));
   else if (act === "reset") {
@@ -1629,7 +1648,14 @@ Sync.initSync({
     toast("Pulled your latest progress from the cloud.");
     render();
   },
-  onStatus: () => currentTab() === "settings" && !document.activeElement?.matches?.("input, textarea") && render(),
+  onStatus: (st) => {
+    if (document.activeElement?.matches?.("input, textarea")) return;
+    // Settings shows sync details; Today's motivation button needs to know
+    // the moment you sign in or out.
+    const signedInChanged = st.email !== lastSyncEmail;
+    lastSyncEmail = st.email;
+    if (currentTab() === "settings" || (signedInChanged && currentTab() === "today")) render();
+  },
   onPushed: maybeNudge,
 });
 

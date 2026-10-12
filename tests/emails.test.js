@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fresh } from "../js/state.js";
 import { dayFacts, reachedHalfway, zonedParts, LESSONS } from "../js/digest.js";
-import { compose, composePartner } from "../js/emails.js";
+import { compose, composePartner, composeBoost, boostPrinciple } from "../js/emails.js";
 import { dueSlots, nudgeAllowed, windows } from "../js/schedule.js";
 import { parseList, emailHours } from "../api/_lib/env.js";
 import { PRINCIPLES, rotation, pickPrinciple } from "../js/principles.js";
@@ -275,5 +275,34 @@ test("emailHours: out-of-order or invalid hours fall back loudly, never to an em
   assert.match(w[1], /"8pm" is not a whole hour/);
   for (const env of [{}, { EMAIL_MORNING_HOUR: "12", EMAIL_MIDDAY_HOUR: "13", EMAIL_EVENING_HOUR: "14" }]) {
     for (const [a, b] of Object.values(windows(emailHours(env)))) assert.ok(a < b, "every window is non-empty");
+  }
+});
+
+// ---------- "Send me motivation"
+
+test("boost: reads the moment (not started, partway, done, rest)", () => {
+  const c = { ...ctx(fresh()), dayIndex: 3 };
+  const steady = showUp(fresh(), ["2026-10-11", "2026-10-12", "2026-10-13"]); // so the morning email didn't already use the two-minute rule
+  const notYet = check(composeBoost(dayFacts(steady, T), c, 1));
+  assert.match(notYet.subject, /^⚡ Right now: open ".+"\. Just 2 minutes\./);
+  assert.match(notYet.text, /The two-minute rule/);
+  const n = dayFacts(fresh(), T).planLessons.length;
+  const part = withDone(2);
+  assert.match(check(composeBoost(dayFacts(part, T), c, 1)).subject, new RegExp(`^⚡ ${n - 2} lessons left, ~`));
+  assert.match(check(composeBoost(dayFacts(withDone(n), T), c, 1)).subject, /already done/);
+  const rest = fresh();
+  rest.settings.weekendMin = 0;
+  assert.match(check(composeBoost(dayFacts(rest, "2026-10-17"), c, 1)).subject, /Rest day/);
+});
+
+test("boost: 8 presses, 8 different ideas, none repeating this morning's", () => {
+  for (const s of [fresh(), withDone(2)]) {
+    for (let d = 0; d < 30; d++) {
+      const F = dayFacts(s, T);
+      const morning = pickPrinciple(F, "morning", d).id;
+      const ids = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => boostPrinciple(F, d, n, F.shownToday ? undefined : "two-minute").id);
+      assert.equal(new Set(ids).size, 8, `day ${d}: ${ids}`);
+      assert.ok(!ids.includes(morning), `day ${d} repeats the morning idea ${morning}`);
+    }
   }
 });
