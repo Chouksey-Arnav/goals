@@ -9,6 +9,7 @@
 //   morning  [morningHour, min(morningHour + 5, middayHour))
 //   midday   [middayHour, eveningHour)   fallback if halfway never triggered it
 //   evening  [eveningHour, 24)
+//   partner  same window as morning: yesterday's record, once it's final
 // Each slot sends at most once per day (enforced by the email_log table).
 
 export function windows({ morningHour, middayHour, eveningHour }) {
@@ -16,16 +17,18 @@ export function windows({ morningHour, middayHour, eveningHour }) {
     morning: [morningHour, Math.min(morningHour + 5, middayHour)],
     midday: [middayHour, eveningHour],
     evening: [eveningHour, 24],
+    partner: [morningHour, Math.min(morningHour + 5, middayHour)],
   };
 }
 
 const inside = (h, [a, b]) => h >= a && h < b;
 
-// The slot a cron run should send now, or null.
-export function dueSlot(hour, sent, cfg) {
+// The slots a cron run should send now (usually none or one).
+// The partner report is only due when there are partners to send it to.
+export function dueSlots(hour, sent, cfg, { partners = false } = {}) {
   const w = windows(cfg);
-  for (const slot of ["morning", "midday", "evening"]) if (inside(hour, w[slot]) && !sent[slot]) return slot;
-  return null;
+  const slots = ["morning", "midday", "evening", ...(partners ? ["partner"] : [])];
+  return slots.filter((slot) => inside(hour, w[slot]) && !sent[slot]);
 }
 
 // Whether ticking lessons may trigger the midday email right now. Never

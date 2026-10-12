@@ -64,6 +64,13 @@ Three emails a day, written from your synced record, sent through your Gmail wit
 
 Rest days get a short morning note only. After the last lesson you get one celebration email, then they stop.
 
+### More people (up to 15 per list)
+
+- **`EMAIL_CC`**: people who get copies of your three daily emails.
+- **`PARTNER_EMAILS`**: accountability partners who get a separate **partner report** each morning about *yesterday*, once the day is final. It says whether you hit 100%, showed up partway, did the bad-day minimum or missed. It also gives how many misses in a row, your chain, whether you're on pace, any contract penalty you haven't paid, and your "win of the day". Missed days come with a nudge for them to send you a message. Partners get no app links. Replies come straight to your Gmail. No report after rest days.
+
+Everyone is BCC'd, so nobody sees anyone else's address, and the partner report never lands in your own inbox. A typo drops only that address. More than 15 drops the whole list until you trim it. Both show up as `warnings` in `/api/cron?status=1` and never block your own emails.
+
 How it works:
 
 - **Schedule.** Vercel's free plan allows only daily crons, each firing somewhere in its hour. `vercel.json` registers 24 of them (one per UTC hour), and [`js/schedule.js`](js/schedule.js) decides which email is due in `GOALS_TZ`. Time zones and daylight saving need no code changes.
@@ -83,7 +90,9 @@ How it works:
 | `CRON_SECRET` | yes | A long random string (`openssl rand -hex 32`). Vercel sends it with every cron call. |
 | `GOALS_TZ` | yes | Your IANA time zone, e.g. `America/New_York`, `America/Chicago`, `America/Los_Angeles` |
 | `APP_URL` | no | Defaults to `https://goals-taupe-six.vercel.app` |
-| `GOALS_NAME` | no | Greeting name. Defaults to the first name on your signed contract. |
+| `EMAIL_CC` | no | Up to 15 comma-separated addresses that get copies of your 3 daily emails |
+| `PARTNER_EMAILS` | no | Up to 15 comma-separated accountability partners for the morning partner report |
+| `GOALS_NAME` | no | Your first name, used in the greeting and in partner report subjects. Defaults to the first name on your signed contract. Set it if you have partners, or reports say "Goals check-in". |
 | `EMAIL_MORNING_HOUR` / `EMAIL_MIDDAY_HOUR` / `EMAIL_EVENING_HOUR` | no | Local hours, default 7 / 14 / 20 |
 
 Then redeploy, sign in on the site with the `EMAIL_TO` address, and tick one lesson.
@@ -91,7 +100,7 @@ Then redeploy, sign in on the site with the `EMAIL_TO` address, and tick one les
 To check it at any time, replace `SECRET`:
 
 - `/api/cron?status=1&key=SECRET` shows config, local time and what was sent today.
-- `/api/cron?slot=morning&dry=1&key=SECRET` previews an email in the browser (add `&format=text` for plain text).
+- `/api/cron?slot=morning&dry=1&key=SECRET` previews an email in the browser (`slot=partner` previews the partner report; add `&format=text` for plain text).
 - `/api/cron?slot=evening&force=1&key=SECRET` sends one now, ignoring "already sent".
 
 Honest limits: the emails only know what has synced, so ticks on a signed-out device are invisible to them. Vercel Hobby crons can fire up to 59 minutes into their hour, so "7:00" means 7:00 to 7:59.

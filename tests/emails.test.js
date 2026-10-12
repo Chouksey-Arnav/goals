@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fresh } from "../js/state.js";
 import { dayFacts, reachedHalfway, zonedParts, LESSONS } from "../js/digest.js";
-import { compose } from "../js/emails.js";
-import { dueSlot, nudgeAllowed, windows } from "../js/schedule.js";
+import { compose, composePartner } from "../js/emails.js";
+import { dueSlots, nudgeAllowed, windows } from "../js/schedule.js";
+import { parseList, emailHours } from "../api/_lib/env.js";
 import { PRINCIPLES, rotation, pickPrinciple } from "../js/principles.js";
 import * as P from "../js/planner.js";
 
@@ -35,16 +36,21 @@ test("zonedParts: same instant, different local day and hour", () => {
   assert.deepEqual(zonedParts(new Date("2026-10-15T04:00:00Z"), "America/New_York"), { day: "2026-10-15", hour: 0 });
 });
 
-test("dueSlot: one email per window, never twice", () => {
-  assert.equal(dueSlot(6, none, CFG), null);
-  assert.equal(dueSlot(7, none, CFG), "morning");
-  assert.equal(dueSlot(11, none, CFG), "morning", "a late cron still delivers the morning plan");
-  assert.equal(dueSlot(12, none, CFG), null, "after noon a morning plan is stale");
-  assert.equal(dueSlot(9, { morning: {} }, CFG), null);
-  assert.equal(dueSlot(14, { morning: {} }, CFG), "midday");
-  assert.equal(dueSlot(15, { morning: {}, midday: {} }, CFG), null, "halfway nudge already sent it");
-  assert.equal(dueSlot(20, { morning: {}, midday: {} }, CFG), "evening");
-  assert.equal(dueSlot(23, { morning: {}, midday: {}, evening: {} }, CFG), null);
+test("dueSlots: one email per window, never twice", () => {
+  const due = (h, sent, opts) => dueSlots(h, sent, CFG, opts);
+  assert.deepEqual(due(6, none), []);
+  assert.deepEqual(due(7, none), ["morning"]);
+  assert.deepEqual(due(11, none), ["morning"], "a late cron still delivers the morning plan");
+  assert.deepEqual(due(12, none), [], "after noon a morning plan is stale");
+  assert.deepEqual(due(9, { morning: {} }), []);
+  assert.deepEqual(due(14, { morning: {} }), ["midday"]);
+  assert.deepEqual(due(15, { morning: {}, midday: {} }), [], "halfway nudge already sent it");
+  assert.deepEqual(due(20, { morning: {}, midday: {} }), ["evening"]);
+  assert.deepEqual(due(23, { morning: {}, midday: {}, evening: {} }), []);
+  // The partner report rides the morning window, only when there are partners.
+  assert.deepEqual(due(7, none, { partners: true }), ["morning", "partner"]);
+  assert.deepEqual(due(8, { morning: {} }, { partners: true }), ["partner"], "a failed report retries next hour");
+  assert.deepEqual(due(14, { morning: {} }, { partners: true }), ["midday"], "no stale report after the morning");
   // Morning window never overlaps midday, even with a late morning hour.
   assert.deepEqual(windows({ morningHour: 12, middayHour: 14, eveningHour: 20 }).morning, [12, 14]);
 });
@@ -208,4 +214,66 @@ test("principles: the three emails of a day never repeat an idea", () => {
       const ids = ["morning", "midday", "evening"].map((sl) => pickPrinciple(F, sl, d).id);
       assert.equal(new Set(ids).size, 3, `day ${d}: ${ids}`);
     }
+});
+
+// ---------- recipients and the partner report
+
+test("parseList: commas, semicolons, spaces; deduped; owner removed", () => {
+  assert.deepEqual(parseList(" A@x.com, b@y.com;c@z.com  a@x.com me@gmail.com ", ["ME@gmail.com"]), ["a@x.com", "b@y.com", "c@z.com"]);
+  assert.deepEqual(parseList(undefined), []);
+});
+
+const pctx = (state, name = "Sam") => ({ name, state });
+const Y = "2026-10-13";
+// Partner report as sent on the morning of T, about Y.
+const report = (s, name) => composePartner(dayFacts(s, Y), dayFacts(s, T), pctx(s, name));
+
+test("partner report: a full day reads as 100%", () => {
+  const s = fresh();
+  dayFacts(s, Y).planLessons.forEach((l) => (s.completed[l.id] = Y));
+  s.dayLog[Y] = { nsv: "Finally got the chain rule" };
+  const r = check2(report(s));
+  assert.match(r.subject, /^Sam's check-in, Tue, Oct 13: ✅ 100%/);
+  assert.match(r.text, /Finally got the chain rule/);
+});
+
+test("partner report: misses in a row and money owed are stated plainly", () => {
+  const s = showUp(fresh(), ["2026-10-11"]);
+  s.contract = { ...s.contract, signedAt: new Date(2026, 9, 10, 9).getTime(), penaltyAmount: 10, partners: [{ name: "Alex", contact: "" }, { name: "", contact: "" }] };
+  const r = check2(report(s));
+  assert.match(r.subject, /❌ missed \(2 days in a row\)/);
+  assert.match(r.text, /owes Alex \$10/);
+  assert.match(r.text, /saw you missed/);
+});
+
+test("partner report: no name falls back cleanly; nothing before tracking or on rest days", () => {
+  const s = fresh();
+  dayFacts(s, Y).planLessons.slice(0, 1).forEach((l) => (s.completed[l.id] = Y));
+  const r = check2(report(s, ""));
+  assert.match(r.subject, /^Goals check-in, /);
+  assert.ok(!/Your friend owes|they owes/.test(r.text));
+  assert.equal(composePartner(dayFacts(s, "2026-10-10"), dayFacts(s, "2026-10-11"), pctx(s)), null);
+  s.settings.weekendMin = 0;
+  assert.equal(composePartner(dayFacts(s, "2026-10-17"), dayFacts(s, "2026-10-18"), pctx(s)), null);
+});
+
+function check2(mail) {
+  assert.ok(mail, "an email");
+  assert.ok(!/undefined|NaN|null|\[object/.test(mail.subject + mail.text + mail.html), "no template leaks");
+  assert.ok(!mail.html.includes("#today"), "partners get no app links (they can't sign in)");
+  return mail;
+}
+
+test("emailHours: out-of-order or invalid hours fall back loudly, never to an empty window", () => {
+  const w = [];
+  assert.deepEqual(emailHours({}, w), { morningHour: 7, middayHour: 14, eveningHour: 20 });
+  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "6", EMAIL_EVENING_HOUR: "21" }, w), { morningHour: 6, middayHour: 14, eveningHour: 21 });
+  assert.equal(w.length, 0);
+  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "8", EMAIL_MIDDAY_HOUR: "7" }, w), { morningHour: 7, middayHour: 14, eveningHour: 20 });
+  assert.match(w[0], /morning < midday < evening/);
+  assert.deepEqual(emailHours({ EMAIL_EVENING_HOUR: "8pm" }, w).eveningHour, 20);
+  assert.match(w[1], /"8pm" is not a whole hour/);
+  for (const env of [{}, { EMAIL_MORNING_HOUR: "12", EMAIL_MIDDAY_HOUR: "13", EMAIL_EVENING_HOUR: "14" }]) {
+    for (const [a, b] of Object.values(windows(emailHours(env)))) assert.ok(a < b, "every window is non-empty");
+  }
 });

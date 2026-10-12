@@ -22,11 +22,12 @@ function getTransport(cfg) {
   return transport;
 }
 
-export async function sendMail(cfg, { to, subject, text, html }) {
+export async function sendMail(cfg, { to, bcc, subject, text, html }) {
   const info = await getTransport(cfg).sendMail({
     // Gmail rewrites From to the authenticated account anyway; say so honestly.
     from: { name: cfg.fromName, address: cfg.gmailUser },
-    to,
+    ...(to ? { to } : {}),
+    ...(bcc?.length ? { bcc } : {}),
     subject,
     text,
     html,

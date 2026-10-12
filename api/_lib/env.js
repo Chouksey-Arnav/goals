@@ -5,20 +5,51 @@ import { SUPABASE_URL as PUBLIC_URL } from "../../js/config.js";
 
 const DEFAULT_APP_URL = "https://goals-taupe-six.vercel.app";
 
+export const MAX_EXTRA = 15;
+
+// "a@x.com, b@y.com; c@z.com" -> unique, lowercased, without the owner.
+export function parseList(raw, exclude = []) {
+  const skip = new Set(exclude.map((e) => e.toLowerCase()));
+  const out = [];
+  for (const part of String(raw || "").split(/[,;\s]+/)) {
+    const e = part.trim().toLowerCase();
+    if (e && !skip.has(e) && !out.includes(e)) out.push(e);
+  }
+  return out;
+}
+const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// A typo drops that one address; more than 15 drops the whole list (better
+// to notice than to silently pick which friends stop hearing from you).
+function recipients(name, raw, owner, warnings) {
+  const list = parseList(raw, [owner]);
+  const bad = list.filter((e) => !isEmail(e));
+  if (bad.length) warnings.push(`${name}: skipped, not an email: ${bad.join(", ")}`);
+  const good = list.filter(isEmail);
+  if (good.length > MAX_EXTRA) {
+    warnings.push(`${name}: ${good.length} addresses, the limit is ${MAX_EXTRA}. Nobody on this list gets email until you trim it.`);
+    return [];
+  }
+  return good;
+}
+
 export function config() {
   const env = process.env;
   const gmailUser = (env.GMAIL_USER || "").trim();
   const to = (env.EMAIL_TO || gmailUser).trim();
-  const hour = (v, d) => {
-    const n = Number(v);
-    return Number.isInteger(n) && n >= 0 && n <= 23 ? n : d;
-  };
+  const warnings = [];
   return {
     gmailUser,
     // Google shows app passwords as "abcd efgh ijkl mnop"; the spaces aren't part of it.
     gmailPass: (env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, ""),
     fromName: env.EMAIL_FROM_NAME || "Goals",
     to: to.toLowerCase(),
+    // Up to 15 people who get copies of your three daily emails (BCC).
+    cc: recipients("EMAIL_CC", env.EMAIL_CC, to, warnings),
+    // Up to 15 accountability partners who get the morning partner report (BCC).
+    partners: recipients("PARTNER_EMAILS", env.PARTNER_EMAILS, to, warnings),
+    // Problems with the optional lists. They never block your own emails.
+    warnings,
     supabaseUrl: (env.SUPABASE_URL || PUBLIC_URL || "").replace(/\/+$/, ""),
     serviceKey: env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY || "",
     cronSecret: env.CRON_SECRET || "",
@@ -27,10 +58,34 @@ export function config() {
     name: (env.GOALS_NAME || "").trim(),
     // Local hours (in GOALS_TZ). Each slot sends at the first hourly check
     // inside its window, then never again that day.
-    morningHour: hour(env.EMAIL_MORNING_HOUR, 7),
-    middayHour: hour(env.EMAIL_MIDDAY_HOUR, 14),
-    eveningHour: hour(env.EMAIL_EVENING_HOUR, 20),
+    ...emailHours(env, warnings),
   };
+}
+
+export const DEFAULT_HOURS = { morningHour: 7, middayHour: 14, eveningHour: 20 };
+
+// Hours must be whole numbers 0-23 in order morning < midday < evening, or a
+// window comes out empty and that email silently never sends. Anything else
+// falls back to the defaults, loudly.
+export function emailHours(env, warnings = []) {
+  const read = (name, d) => {
+    const raw = env[name];
+    if (raw === undefined || String(raw).trim() === "") return d;
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 0 && n <= 23) return n;
+    warnings.push(`${name}: "${raw}" is not a whole hour 0-23, using ${d}.`);
+    return d;
+  };
+  const h = {
+    morningHour: read("EMAIL_MORNING_HOUR", DEFAULT_HOURS.morningHour),
+    middayHour: read("EMAIL_MIDDAY_HOUR", DEFAULT_HOURS.middayHour),
+    eveningHour: read("EMAIL_EVENING_HOUR", DEFAULT_HOURS.eveningHour),
+  };
+  if (!(h.morningHour < h.middayHour && h.middayHour < h.eveningHour)) {
+    warnings.push(`Email hours must go morning < midday < evening (got ${h.morningHour} / ${h.middayHour} / ${h.eveningHour}), using 7 / 14 / 20.`);
+    return { ...DEFAULT_HOURS };
+  }
+  return h;
 }
 
 // Names of required variables that are missing, so failures say exactly what to fix.

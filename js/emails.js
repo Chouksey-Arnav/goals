@@ -362,3 +362,77 @@ function evening(F, ctx) {
   blocks.push(button(F.complete ? "Close the day" : F.shownToday ? "Finish today" : "Do one lesson now", `${ctx.appUrl}/#today${F.complete ? "/close" : ""}`));
   return wrap(subject, opener, blocks, footerFor(F, ctx));
 }
+
+// ---------- the partner report (the "second email")
+//
+// Sent each morning to PARTNER_EMAILS about yesterday, once the day is final.
+// Atomic Habits: an accountability partner makes inaction immediately costly,
+// because someone is watching. So this states facts, not spin: what happened,
+// how many misses in a row, and what's owed under the contract.
+//
+// Fy: dayFacts for yesterday. F: dayFacts for today (for misses and debts).
+
+export function composePartner(Fy, F, ctx) {
+  const y = Fy.t;
+  if (Fy.ctx.trackStart > y) return null;
+  if (Fy.finishedOn && y > Fy.finishedOn) return null;
+  if (Fy.rest && !Fy.shownToday) return null;
+
+  const who = ctx.name || "Your friend";
+  const day = dateLabel(y, { weekday: "short", month: "short", day: "numeric" });
+  const n = Fy.planLessons.length;
+  const lessons = Fy.doneToday.length;
+  const minutes = Fy.doneToday.reduce((a, l) => a + l.effort, 0);
+  const log = (ctx.state.dayLog || {})[y] || {};
+  const ci = (ctx.state.checkins || {})[y] || {};
+  const missed = !Fy.shownToday;
+  const inARow = missed ? F.missRun : 0;
+
+  let status;
+  let short;
+  let tone;
+  if (missed) {
+    tone = "bad";
+    short = inARow >= 2 ? `❌ missed (${inARow} days in a row)` : "❌ missed";
+    status = inARow >= 2
+      ? `Missed. That's ${inARow} scheduled days in a row with nothing done. Missing twice is how a habit dies.`
+      : "Missed. Nothing done on a scheduled day. Once is an accident; today decides if it's a pattern.";
+  } else if (Fy.mode === "min") {
+    tone = "warn";
+    short = "🌧️ bad day, did the minimum";
+    status = `Bad day, but showed up: did the minimum (${plural(lessons, "lesson")}). The chain held.`;
+  } else if (Fy.complete) {
+    tone = "good";
+    short = `✅ 100%, ${plural(lessons, "lesson")}`;
+    status = `Hit 100% of the plan: ${plural(lessons, "lesson")}, about ${fmt(minutes)} of real work.`;
+  } else {
+    tone = "good";
+    short = `✅ ${Fy.planDone.length}/${n} planned`;
+    const extra = lessons - Fy.planDone.length;
+    status = `Showed up: ${Fy.planDone.length} of ${n} planned lessons (${Fy.pct}% of the day's work)${extra > 0 ? `, plus ${extra} extra` : ""}. Chain kept, plan not finished.`;
+  }
+
+  const blocks = [heading(`${who}'s check-in for ${day}`), banner(status, tone)];
+  const facts = [
+    `Chain: ${plural(missed ? 0 : Fy.streak, "day")} (best ${Fy.best})`,
+    `${plural(Fy.shownUpDays, "day")} showed up so far`,
+    F.plan.onTrack ? `On pace for ${dateLabel(F.s.deadline, { month: "short", day: "numeric" })}` : `Behind pace for ${dateLabel(F.s.deadline, { month: "short", day: "numeric" })}`,
+  ];
+  blocks.push(para(facts.join(" · "), { muted: true }));
+  if (F.unpaid.length) {
+    const p = F.partner?.name;
+    blocks.push(banner(`Under their signed habit contract, ${who === "Your friend" ? "they" : who} owe${who === "Your friend" ? "" : "s"} ${p ? p : "their accountability partner"} ${money(F, F.owed)} for missing twice (${F.unpaid.map((d) => dateLabel(d, { month: "short", day: "numeric" })).join(", ")}). Not yet marked paid.`, "bad"));
+  }
+  if (log.nsv) blocks.push(para(`Their win of the day: "${log.nsv}"`));
+  const mood = ["energy", "focus", "calm"].filter((k) => ci[k]).map((k) => `${k} ${ci[k]}/5`);
+  if (mood.length) blocks.push(para(`How they felt: ${mood.join(", ")}.`, { muted: true }));
+  blocks.push(
+    para(
+      missed
+        ? "What helps: a short message today. Not a lecture, just \"saw you missed, what's the plan for tonight?\" Knowing someone noticed is the whole point."
+        : "What helps: a one-line reply. Being seen keeps the habit going.",
+    )
+  );
+  const footer = `You're getting this because ${who === "Your friend" ? "a friend" : who} added you as an accountability partner in their Goals habit tracker (from Atomic Habits: someone watching makes skipping costly). Reply to reach them directly. To stop these, ask them to remove you.`;
+  return wrap(`${ctx.name ? `${ctx.name}'s` : "Goals"} check-in, ${day}: ${short}`, status, blocks, footer);
+}
