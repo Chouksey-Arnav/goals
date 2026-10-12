@@ -46,6 +46,56 @@ Laws 1 to 3 get a session done *this* time. Law 4 gets it done *next* time. So d
 
 Honest limits: the app can't move money or message anyone by itself. It builds the message and the reminder, and you press send. Penalties are only as real as your partner makes them.
 
+## Atomic Habits as a daily system
+
+[`js/principles.js`](js/principles.js) holds 30 ideas from the book, paraphrased and grouped as the foundations, the Four Laws and the advanced chapters. They include 1% better, systems vs goals, identity votes, the plateau of latent potential, implementation intentions, habit stacking, environment design, temptation bundling, reframing, the two-minute rule, decisive moments, the Goldilocks rule, boredom, deliberate practice, and reflection and review. Each idea has an `action(F)` that turns it into one concrete instruction computed from *today's* record, e.g. "Two minutes: open 'Introduction to Numpy' and press play."
+
+The situation picks the idea: missed yesterday → *never miss twice*; nothing done by midday → *two-minute rule*; finished → *what is rewarded is repeated*. Otherwise it rotates through the whole book. The three emails of one day never repeat an idea. The System tab shows today's idea and the full library.
+
+## Daily emails
+
+Three emails a day, written from your synced record, sent through your Gmail with Nodemailer:
+
+| Email | When | What it says |
+|---|---|---|
+| **Morning plan** | First hourly check after 7:00 local | The exact Up Next lesson, the full checklist with real-work minutes, your pace vs the deadline, the chain, and one Atomic Habits idea as a task. Leads with any unpaid contract breach. After a miss: *never miss twice*. |
+| **Midday check-in** | The moment you reach halfway (5 of 10 lessons, or 50% of the minutes), or 14:00 local if that never happens | "Halfway. 5 down, 5 to go." / "0 of 10 done. Two minutes, that's all." / "Day complete. Reward unlocked." |
+| **Evening wrap** | First hourly check after 20:00 local | Done: recap, identity vote, tomorrow's first lesson. Partial: what's left, honestly. Nothing: "your chain breaks at midnight", the minimum, and the contract cost if a second miss would breach it. |
+
+Rest days get a short morning note only. After the last lesson you get one celebration email, then they stop.
+
+How it works:
+
+- **Schedule.** Vercel's free plan allows only daily crons, each firing somewhere in its hour. `vercel.json` registers 24 of them (one per UTC hour), and [`js/schedule.js`](js/schedule.js) decides which email is due in `GOALS_TZ`. Time zones and daylight saving need no code changes.
+- **Halfway trigger.** After each synced tick the app calls `POST /api/nudge`. The server checks that the session belongs to `EMAIL_TO`, re-reads your progress from the database and decides on its own.
+- **Exactly once.** Table `email_log` has one row per (recipient, day, slot). Inserting it is the claim, so a cron run and a nudge racing each other can't both send. A failed send releases the claim and the next hour retries. A sent email is never re-sent.
+- **Same plan as the app.** [`js/digest.js`](js/digest.js) computes "where do I stand" for both the Today tab and the emails, and [`js/state.js`](js/state.js) normalizes old saves for both.
+- **Sign-in codes through Gmail.** `POST /api/login-code` emails a 6-digit code via Nodemailer, because Supabase's built-in mailer only delivers to project team members. It only sends to `EMAIL_TO`, so strangers can't sign up. It's throttled to one code per 45 s and 10 per day.
+
+### Environment variables (Vercel → Settings → Environment Variables, Production)
+
+| Name | Required | Value |
+|---|---|---|
+| `GMAIL_USER` | yes | The Gmail address that sends, e.g. `you@gmail.com` |
+| `GMAIL_APP_PASSWORD` | yes | 16-character [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification). Not your Gmail password. |
+| `EMAIL_TO` | yes | Where emails go. Also the only address allowed to sign in. |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | Supabase → Project Settings → API Keys → **secret** key (`sb_secret_…`). Server only, never in `js/`. |
+| `CRON_SECRET` | yes | A long random string (`openssl rand -hex 32`). Vercel sends it with every cron call. |
+| `GOALS_TZ` | yes | Your IANA time zone, e.g. `America/New_York`, `America/Chicago`, `America/Los_Angeles` |
+| `APP_URL` | no | Defaults to `https://goals-taupe-six.vercel.app` |
+| `GOALS_NAME` | no | Greeting name. Defaults to the first name on your signed contract. |
+| `EMAIL_MORNING_HOUR` / `EMAIL_MIDDAY_HOUR` / `EMAIL_EVENING_HOUR` | no | Local hours, default 7 / 14 / 20 |
+
+Then redeploy, sign in on the site with the `EMAIL_TO` address, and tick one lesson.
+
+To check it at any time, replace `SECRET`:
+
+- `/api/cron?status=1&key=SECRET` shows config, local time and what was sent today.
+- `/api/cron?slot=morning&dry=1&key=SECRET` previews an email in the browser (add `&format=text` for plain text).
+- `/api/cron?slot=evening&force=1&key=SECRET` sends one now, ignoring "already sent".
+
+Honest limits: the emails only know what has synced, so ticks on a signed-out device are invisible to them. Vercel Hobby crons can fire up to 59 minutes into their hour, so "7:00" means 7:00 to 7:59.
+
 ## Olympiad focus
 
 Every lesson was checked against the official [IOAI 2026 syllabus](https://ioai-official.org/wp-content/uploads/2025/10/Syllabus.pdf). Off-syllabus lessons are marked **Optional** and left out of the daily plan (Settings can include them):
@@ -60,7 +110,7 @@ The System tab lists what the two courses do **not** cover (PyTorch, CNNs, trans
 
 Progress is saved in the browser first. Signing in (email login link) syncs it through Supabase so a phone and a laptop stay in step. Whichever copy was changed most recently wins.
 
-Security model: table `public.progress` holds one JSON row per user. Row Level Security is on, and the only policies let a signed-in user read, insert and update **their own** row. Anonymous visitors have no grants at all. The publishable key in `js/config.js` is meant to be public.
+Security model: table `public.progress` holds one JSON row per user. Row Level Security is on, and the only policies let a signed-in user read, insert and update **their own** row. Anonymous visitors have no grants at all. The publishable key in `js/config.js` is meant to be public. Tables `email_log` and `login_throttle` (see [`supabase/migrations`](supabase/migrations)) have RLS on, no policies and no grants, so only the server's secret key can touch them.
 
 Preview any date with `?today=2026-10-20`.
 
@@ -76,9 +126,9 @@ All lessons are in [`js/data.js`](js/data.js) as `[number, "exact title", minute
 
 ```bash
 python3 -m http.server 8000   # then open http://localhost:8000
-npm test                      # planner, data and habit-rule tests (Node 20+)
+npm test                      # planner, habit-rule, schedule and email tests (Node 20+)
 ```
 
-It's a static site with no build step and no dependencies. Vercel serves it as-is.
+The site is static with no build step. The only dependency is Nodemailer, used by the three serverless routes in `api/`. Vercel serves everything else as-is.
 
 Built with help from Claude Code (AI).

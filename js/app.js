@@ -1,8 +1,11 @@
-import { COURSES, allLessons, plannable, DEADLINE, TRACK_START, KIND_LABEL, KIND_TIP } from "./data.js";
+import { COURSES, allLessons, plannable, TRACK_START, KIND_LABEL, KIND_TIP } from "./data.js";
 import * as P from "./planner.js";
 import * as H from "./habits.js";
 import * as Sync from "./sync.js";
 import * as FX from "./feedback.js";
+import * as D from "./digest.js";
+import { fresh, normalize } from "./state.js";
+import { PRINCIPLES, LAW_NAMES, pickPrinciple } from "./principles.js";
 
 // ---------- state
 
@@ -10,83 +13,6 @@ const KEY = "goals.v1";
 const LESSONS = allLessons();
 const BY_ID = Object.fromEntries(LESSONS.map((l) => [l.id, l]));
 const COURSE = Object.fromEntries(COURSES.map((c) => [c.id, c]));
-
-const DEFAULT_SETTINGS = {
-  weekdayMin: 150,
-  weekendMin: 240,
-  deadline: DEADLINE,
-  bufferDays: 2,
-  includeOptional: false,
-  when: "7:00 pm",
-  where: "my desk",
-  identity: "I am someone who understands machine learning from first principles.",
-  // Habit stacking + habit tracking: "After [CURRENT HABIT], I will [TRACK MY HABIT]."
-  stackAfter: "I finish dinner",
-  stackTrack: "close the day in Goals",
-  minimum: "Open the Up Next lesson and finish just that one.",
-  bundle: "",
-  bundleAligned: "",
-  ritual: ["Phone in another room", "Water and a snack on the desk", "Udemy open next to a blank notebook"],
-  avoid: [
-    { id: "phone-in-another-room-while-studying", name: "Phone in another room while studying", amount: 0 },
-    { id: "skip-buying-snacks-or-coffee-out", name: "Skip buying snacks or coffee out", amount: 4 },
-  ],
-  jarLabel: "Olympiad fund",
-  jarTarget: 100,
-  currency: "$",
-  sound: true,
-};
-
-const DEFAULT_CONTRACT = {
-  goal: "Finish both ML courses by October 31, 2026, as the foundation for AI Olympiad prep.",
-  habits: [
-    "Show up every scheduled day and finish at least the Up Next lesson.",
-    "Follow the daily plan the app builds, math first, then code.",
-    "Attempt every Solve first exercise before watching the answer.",
-    "Send my partner a check-in every evening.",
-  ],
-  penaltyAmount: 10,
-  penaltyAction: "pay my accountability partner the same day",
-  publicPenalty: "",
-  partners: [
-    { name: "", contact: "" },
-    { name: "", contact: "" },
-  ],
-  signer: "",
-  partnerSigs: ["", ""],
-  signedAt: null,
-};
-
-function fresh() {
-  const completed = {};
-  for (const c of COURSES) for (const n of c.preDone || []) completed[`${c.id}-${n}`] = "pre";
-  return normalize({ completed, settings: { ...DEFAULT_SETTINGS } });
-}
-
-function normalize(s) {
-  s.settings = { ...DEFAULT_SETTINGS, ...(s.settings || {}) };
-  s.completed = s.completed || {};
-  s.ritual = s.ritual || { date: null, checks: [] };
-  s.history = s.history || {};
-  s.celebrated = s.celebrated || {};
-  s.dayLog = s.dayLog || {}; // { date: { mode: "full"|"min", closed, nsv } }
-  s.checkins = s.checkins || {}; // { date: { energy, focus, calm } }
-  s.notes = s.notes || {}; // { lessonId: { text, at } }
-  s.actual = s.actual || {}; // { lessonId: measured minutes }
-  s.tickAt = s.tickAt || {}; // { lessonId: ms }
-  s.session = s.session || null; // running lesson timer
-  s.avoidLog = s.avoidLog || {};
-  s.transferred = Number(s.transferred) || 0;
-  s.milestones = s.milestones || {};
-  s.penaltyPaid = s.penaltyPaid || {};
-  s.contractLog = s.contractLog || [];
-  const c = { ...DEFAULT_CONTRACT, ...(s.contract || {}) };
-  c.partners = [0, 1].map((i) => ({ name: "", contact: "", ...(c.partners?.[i] || {}) }));
-  c.partnerSigs = [0, 1].map((i) => c.partnerSigs?.[i] || "");
-  c.habits = Array.isArray(c.habits) ? c.habits : DEFAULT_CONTRACT.habits;
-  s.contract = c;
-  return s;
-}
 
 let storageOk = true;
 function load() {
@@ -190,47 +116,13 @@ function courseProgress(courseId) {
 }
 
 // Everything the views need about "where do I stand", computed once.
+// Shared with the email server (js/digest.js) so both always agree.
 function facts() {
-  const t = today();
-  const s = state.settings;
-  const lessons = planSet();
-  const plan = P.planDay({ lessons, completed: state.completed, today: t, settings: s });
-  const byDay = P.minutesByDay(LESSONS, state.completed);
-  const active = H.activeSet(state.completed);
-  const remaining = lessons.filter((l) => !isDone(l)).length;
-  const finishedOn = remaining === 0 ? [...active].sort().pop() || t : null;
-  const ctx = { active, today: t, settings: s, trackStart: TRACK_START, finishedOn };
-  const isRest = (k) => H.isRestDay(k, s);
-  const c = state.contract;
-  const signedDay = c.signedAt ? P.dayKey(new Date(c.signedAt)) : null;
-  const strikeDays = signedDay ? H.strikes(ctx, signedDay) : [];
-  const unpaid = strikeDays.filter((d) => !state.penaltyPaid[d]);
-  const planLessons = plan.ids.map((id) => BY_ID[id]);
-  const mode = state.dayLog[t]?.mode === "min" ? "min" : "full";
-  const shownUp = [...active].filter((k) => k >= TRACK_START);
-  return {
-    t, s, plan, planLessons, byDay, active, ctx, finishedOn, remaining, mode,
-    next: planLessons.find((l) => !isDone(l)),
-    doneToday: LESSONS.filter((l) => state.completed[l.id] === t),
-    shownToday: active.has(t),
-    streak: P.streak(active, t, isRest),
-    best: P.bestStreak(active, isRest),
-    missRun: finishedOn ? 0 : H.missRun(ctx),
-    allStrikes: H.strikes(ctx, P.addDays(TRACK_START, -1)),
-    strikeDays, unpaid, signedDay,
-    partner: c.partners.find((p) => p.name.trim()),
-    votes: Object.values(state.completed).filter((v) => v !== "pre").length,
-    perfect: Object.keys(byDay).filter((k) => state.history[k] && byDay[k].min >= state.history[k]).length,
-    minDays: shownUp.filter((k) => state.dayLog[k]?.mode === "min").length,
-    shownUpDays: shownUp.length,
-    phase: H.reinforcementPhase(shownUp.length),
-    savings: H.savingsTotals(state.avoidLog, state.transferred),
-  };
+  return D.dayFacts(state, today());
 }
 
 function dayComplete(F) {
-  if (F.mode === "min") return F.shownToday;
-  return F.plan.ids.length > 0 && F.plan.ids.every((id) => state.completed[id]);
+  return F.complete;
 }
 
 // ---------- shared components
@@ -919,6 +811,24 @@ function accountabilityCard(F) {
   </section>`;
 }
 
+// Today's idea is the same one the morning email leads with.
+function principleCard(F) {
+  const pr = pickPrinciple(F, "morning", P.diffDays(TRACK_START, F.t));
+  const groups = Object.entries(LAW_NAMES)
+    .map(([law, name]) => {
+      const items = PRINCIPLES.filter((x) => String(x.law) === law);
+      return `<div class="sub-h" style="margin-top:12px">${esc(name)}</div>
+        <ul class="toolkit">${items.map((x) => `<li><b>${esc(x.title)}.</b> ${esc(x.idea)}</li>`).join("")}</ul>`;
+    })
+    .join("");
+  return `<section class="card" id="book">
+    <h2>Today's idea <span class="right">${esc(LAW_NAMES[pr.law])}</span></h2>
+    <p style="margin:0 0 6px"><b>${esc(pr.title)}.</b> ${esc(pr.idea)}</p>
+    <p class="intention" style="margin:10px 0 0">Today: <em>${esc(pr.action(F))}</em></p>
+    <details style="margin-top:14px"><summary class="small"><b>The whole book as a system</b> · ${PRINCIPLES.length} ideas, one a day in your emails</summary>${groups}</details>
+  </section>`;
+}
+
 function viewSystem() {
   const F = facts();
   const s = state.settings;
@@ -933,6 +843,8 @@ function viewSystem() {
       </div>
       <p class="small muted" style="margin:12px 0 0">Laws 1 to 3 make you do it <b>this</b> time. Law 4 makes you do it <b>next</b> time: it closes the loop. Positive emotion tells your brain "repeat this"; negative emotion kills a habit. So doing the work always feels good here, and only skipping it hurts.</p>
     </section>
+
+    ${principleCard(F)}
 
     ${discountCard()}
 
@@ -1083,6 +995,7 @@ function viewSettings() {
   </div>`;
 }
 
+let pendingEmail = "";
 function syncCard() {
   const st = Sync.status;
   let body;
@@ -1090,13 +1003,19 @@ function syncCard() {
     body = `<p class="small muted" style="margin:0">Cloud sync is not connected yet. Until it is, progress lives only in this browser.</p>`;
   } else if (!st.ready && !st.error) {
     body = `<p class="small muted" style="margin:0">Connecting…</p>`;
+  } else if (!st.email && pendingEmail) {
+    body = `<p class="small" style="margin:0 0 12px">We emailed a 6-digit code to <b>${esc(pendingEmail)}</b>. It can take a minute; check spam once.</p>
+      <div class="field"><label for="syncCode">Code</label><input id="syncCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456"/></div>
+      <button class="btn primary block" data-action="verify-code">Sign in</button>
+      <div class="btn-row" style="margin-top:10px"><button class="btn sm ghost" data-action="signin" data-resend="1">Send a new code</button><button class="btn sm ghost" data-action="signin-cancel">Use a different email</button></div>`;
   } else if (!st.email) {
-    body = `<p class="small muted" style="margin:0 0 12px">Sign in with your email to keep your phone and laptop in sync. You'll get a one-time login link, no password.</p>
-      <div class="field"><label for="syncEmail">Email</label><input id="syncEmail" type="email" autocomplete="email" placeholder="you@example.com"/></div>
-      <button class="btn primary block" data-action="signin">Email me a login link</button>`;
+    body = `<p class="small muted" style="margin:0 0 12px">Sign in with your email to keep your phone and laptop in sync and to turn on your daily emails (they're built from your synced progress). You'll get a 6-digit code, no password.</p>
+      <div class="field"><label for="syncEmail">Email</label><input id="syncEmail" type="email" autocomplete="email" placeholder="you@gmail.com"/></div>
+      <button class="btn primary block" data-action="signin">Email me a code</button>`;
   } else {
     const when = st.lastSync ? st.lastSync.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "not yet";
     body = `<p class="small" style="margin:0 0 12px"><span class="dot ${st.error ? "bad" : "good"}"></span> Synced as <b>${esc(st.email)}</b> · last sync ${when}</p>
+      <p class="small muted" style="margin:0 0 12px">📬 Daily emails go to this address: a morning plan, a check-in the moment you hit halfway, and an evening wrap. They only know what has synced, so tick lessons while signed in.</p>
       <div class="btn-row"><button class="btn ghost" data-action="syncnow">Sync now</button><button class="btn ghost" data-action="signout">Sign out</button></div>`;
   }
   return `<section class="card"><h2>Sync across devices <span class="right">${st.enabled ? "Supabase" : "off"}</span></h2>
@@ -1429,13 +1348,31 @@ document.addEventListener("click", (e) => {
     render();
   } else if (act === "export") exportData();
   else if (act === "signin") {
-    const email = ($("#syncEmail")?.value || "").trim();
+    const email = a.dataset.resend ? pendingEmail : ($("#syncEmail")?.value || "").trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Enter a valid email.");
     a.disabled = true;
-    Sync.signIn(email).then(({ error }) => {
+    Sync.signIn(email).then(({ error, via }) => {
       a.disabled = false;
-      toast(error ? `Couldn't send: ${error}` : "Check your email and tap the login link on this device.");
+      if (error) return toast(`Couldn't send: ${error}`);
+      pendingEmail = email;
+      toast(via === "gmail" ? "Code sent. Check your email." : "Check your email for a code or a login link.");
+      render();
+      $("#syncCode")?.focus();
     });
+  } else if (act === "verify-code") {
+    const code = ($("#syncCode")?.value || "").replace(/\D/g, "");
+    if (code.length < 6) return toast("Enter the 6-digit code from the email.");
+    a.disabled = true;
+    Sync.verifyCode(pendingEmail, code).then(({ error }) => {
+      a.disabled = false;
+      if (error) return toast(error);
+      pendingEmail = "";
+      toast("Signed in. Syncing now.");
+      render();
+    });
+  } else if (act === "signin-cancel") {
+    pendingEmail = "";
+    render();
   } else if (act === "signout") Sync.signOut().then(() => toast("Signed out. Progress stays on this device."));
   else if (act === "syncnow") Sync.reconcile().then(() => toast(Sync.status.error || "Synced."));
   else if (act === "reset") {
@@ -1469,6 +1406,8 @@ function signContract() {
 // Enter in the "lock it in" box saves it.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.id === "noteText") $('[data-action="note"]')?.click();
+  if (e.key === "Enter" && e.target.id === "syncCode") $('[data-action="verify-code"]')?.click();
+  if (e.key === "Enter" && e.target.id === "syncEmail") $('[data-action="signin"]')?.click();
 });
 
 // The discounting slider updates in place, no re-render.
@@ -1691,4 +1630,29 @@ Sync.initSync({
     render();
   },
   onStatus: () => currentTab() === "settings" && !document.activeElement?.matches?.("input, textarea") && render(),
+  onPushed: maybeNudge,
 });
+
+// The midday email goes out the moment you're halfway, not at a fixed hour.
+// After every synced change, if today just crossed halfway, ask the server.
+// It re-checks from the database and sends at most once a day.
+const NUDGE_KEY = "goals.nudged";
+let nudging = false;
+function maybeNudge() {
+  const F = facts();
+  if (nudging || !D.reachedHalfway(F) || params.get("today")) return;
+  try {
+    if (localStorage.getItem(NUDGE_KEY) === F.t) return;
+  } catch {}
+  nudging = true;
+  Sync.nudge()
+    .then((r) => {
+      if (r?.sent || r?.reason === "already sent today") {
+        try {
+          localStorage.setItem(NUDGE_KEY, F.t);
+        } catch {}
+      }
+      if (r?.sent) toast("📬 Halfway check-in sent to your inbox.");
+    })
+    .finally(() => (nudging = false));
+}
