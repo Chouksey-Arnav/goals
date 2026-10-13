@@ -122,6 +122,19 @@ To check it at any time, replace `SECRET`:
 
 Honest limits: the emails only know what has synced, so ticks on a signed-out device are invisible to them. Vercel Hobby crons can fire up to 59 minutes into their hour, so "7:00" means 7:00 to 7:59.
 
+## Calendar integration
+
+Goals and [Calendar](https://github.com/Chouksey-Arnav/calendarforarnav) share one Supabase project and one account, so each can show the other:
+
+- **Today tab:** a "Today on your calendar" card lists today's events and open to-dos. It loads after the tab renders, from the calendar's `/api/agenda` with your session token, and hides itself if you're signed out or the calendar is unreachable.
+- **Morning email:** the same agenda appears under the checklist, so the study plan is written around the rest of your day. The server fetches it with `CALENDAR_SECRET` (the calendar project's `CRON_SECRET`). If it's missing or the calendar is down, the email goes out without that section after at most 5 seconds.
+- **The other way:** `GET /api/today` (your session token) returns today's ring, next lesson and streak as JSON. The calendar shows it as a study card. CORS allows only `CALENDAR_URL`.
+
+| Name | Required | Value |
+|---|---|---|
+| `CALENDAR_SECRET` | no | The calendar project's `CRON_SECRET` |
+| `CALENDAR_URL` | no | Defaults to `https://calendarforarnav.vercel.app` |
+
 ## Olympiad focus
 
 Every lesson was checked against the official [IOAI 2026 syllabus](https://ioai-official.org/wp-content/uploads/2025/10/Syllabus.pdf). Off-syllabus lessons are marked **Optional** and left out of the daily plan (Settings can include them):

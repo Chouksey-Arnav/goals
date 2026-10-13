@@ -3,6 +3,7 @@
 import { config, missing } from "./env.js";
 import * as DB from "./supabase.js";
 import { sendMail, explainMailError } from "./mailer.js";
+import { fetchAgenda } from "./calendar.js";
 import { dayFacts, zonedParts } from "../../js/digest.js";
 import { normalize } from "../../js/state.js";
 import { compose, composePartner } from "../../js/emails.js";
@@ -53,7 +54,14 @@ export function buildEmail(cfg, slot, ctx) {
     dayIndex: diffDays(TRACK_START, ctx.day),
     state: ctx.state,
     middayHour: cfg.middayHour,
+    agenda: ctx.agenda || null,
   });
+}
+
+// The morning email lists today's calendar. Fetched only for that slot.
+export async function withAgenda(cfg, ctx, slot) {
+  if (slot === "morning" && !ctx.problem && ctx.agenda === undefined) ctx.agenda = await fetchAgenda(cfg, ctx.day);
+  return ctx;
 }
 
 // When there's no data to work from, say so once a morning instead of going
@@ -84,6 +92,7 @@ export function addressing(cfg, slot) {
 export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
   const addr = addressing(cfg, slot);
   if (!addr) return { slot, sent: false, reason: "PARTNER_EMAILS is empty" };
+  await withAgenda(cfg, ctx, slot);
   const mail = ctx.problem ? (slot === "morning" ? setupEmail(cfg, ctx.problem) : null) : buildEmail(cfg, slot, ctx);
   if (!mail) return { slot, sent: false, reason: ctx.problem || "nothing worth sending (rest day, before tracking, or finished)" };
   // The sign-in reminder is for you only, never for copies or partners.

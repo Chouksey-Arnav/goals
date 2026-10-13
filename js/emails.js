@@ -175,6 +175,47 @@ ${body.map((b) => b.html).join("\n")}
   return { subject, text, html, preheader };
 }
 
+// Today on the calendar (from the calendar app), so the study plan is
+// written around the rest of your day. agenda: GET /api/agenda's JSON.
+export function agendaBlock(agenda) {
+  if (!agenda) return block("", "");
+  const events = agenda.events || [];
+  const open = agenda.tasks?.open || [];
+  if (!events.length && !open.length) {
+    return block(
+      "TODAY ON YOUR CALENDAR\nNothing else scheduled. The whole day is yours to plan around this.",
+      `<div style="margin:4px 0 18px;padding:12px 14px;border:1px solid #e5e7eb;border-radius:12px;font-size:14px;color:#4b5563"><b style="color:#111827">Today on your calendar:</b> nothing else scheduled. The whole day is yours to plan around this.</div>`
+    );
+  }
+  const shown = events.slice(0, 8);
+  const tasks = open.slice(0, 5);
+  const text = [
+    "TODAY ON YOUR CALENDAR",
+    ...shown.map((e) => `  ${e.allDay ? "All day" : e.time.split(" – ")[0]}  ${e.title}${e.location ? ` (${e.location})` : ""}`),
+    events.length > shown.length ? `  + ${events.length - shown.length} more` : "",
+    tasks.length ? `To-do: ${tasks.map((t) => t.title + (t.overdue ? " (overdue)" : "")).join(" · ")}${open.length > tasks.length ? ` · +${open.length - tasks.length} more` : ""}` : "",
+    agenda.appUrl ? `Calendar: ${agenda.appUrl}` : "",
+  ].filter(Boolean).join("\n");
+  const rows = shown
+    .map(
+      (e) => `<tr><td style="padding:6px 10px 6px 0;width:72px;vertical-align:top;font-size:13px;color:#6b7280;white-space:nowrap">${esc(e.allDay ? "All day" : e.time.split(" – ")[0])}</td><td style="padding:6px 0;font-size:14px;color:#111827">${e.url ? `<a href="${esc(e.url)}" style="color:#111827;text-decoration:none">${esc(e.title)}</a>` : esc(e.title)}${e.location ? `<span style="color:#9ca3af"> · ${esc(e.location)}</span>` : ""}</td></tr>`
+    )
+    .join("");
+  const more = events.length > shown.length ? `<div style="font-size:12px;color:#9ca3af;margin-top:2px">+ ${events.length - shown.length} more</div>` : "";
+  const todo = tasks.length
+    ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #f3f4f6;font-size:13px;color:#4b5563"><b style="color:#111827">To-do:</b> ${tasks
+        .map((t) => esc(t.title) + (t.overdue ? ' <span style="color:#dc2626;font-weight:600">overdue</span>' : ""))
+        .join(" · ")}${open.length > tasks.length ? ` · +${open.length - tasks.length} more` : ""}</div>`
+    : "";
+  return block(
+    text,
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 18px;border-collapse:separate"><tr><td style="border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px">
+      <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7c3aed;font-weight:700;margin-bottom:6px">Today on your calendar${agenda.appUrl ? ` · <a href="${esc(agenda.appUrl)}" style="color:#7c3aed">open</a>` : ""}</div>
+      ${events.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>${more}` : `<div style="font-size:14px;color:#4b5563">No events today.</div>`}${todo}
+    </td></tr></table>`
+  );
+}
+
 function heading(t) {
   return block(t, `<h1 style="margin:0 0 10px;font-size:22px;line-height:1.3;color:#111827">${esc(t)}</h1>`);
 }
@@ -231,6 +272,7 @@ function morning(F, ctx) {
         heading(hi(ctx, "Rest day")),
         para("Nothing is planned today and the chain can't break. Rest is part of the system, not a break from it."),
         para("If you want to get ahead anyway, any lesson you finish today lightens the rest of the plan.", { muted: true }),
+        agendaBlock(ctx.agenda),
         principleBlock(F, "morning", ctx.dayIndex),
         statsLine(F),
       ],
@@ -285,6 +327,7 @@ function morning(F, ctx) {
   if (!F.complete) blocks.push(nextBlock(F));
   if (F.planDone.length) blocks.push(progressBar(F));
   if (F.mode !== "min") blocks.push(checklist(F, "Today's checklist", ctx));
+  blocks.push(agendaBlock(ctx.agenda));
   blocks.push(para(
     F.sessions
       ? `The plan: morning block now at ${F.s.where}, afternoon block after lunch. Math first while your brain is fresh, then code. Solve first means attempt it before the answer.`

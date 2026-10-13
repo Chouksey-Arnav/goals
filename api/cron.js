@@ -10,7 +10,7 @@
 //   /api/cron?status=1&key=SECRET              what's been sent today, and config check
 
 import { timingSafeEqual } from "node:crypto";
-import { config, missing, loadDay, sendSlot, buildEmail, json, nowIn, isAlertHour, sendAlert } from "./_lib/run.js";
+import { config, missing, loadDay, sendSlot, buildEmail, withAgenda, json, nowIn, isAlertHour, sendAlert } from "./_lib/run.js";
 import { slotsSent } from "./_lib/supabase.js";
 import { dueSlots, windows } from "../js/schedule.js";
 
@@ -66,6 +66,7 @@ export default async function handler(req, res) {
     if (q.get("dry")) {
       const slot = slotParam || "morning";
       if (ctx.problem) return json(res, 200, { slot, problem: ctx.problem, note: "No synced progress to build from yet." });
+      await withAgenda(cfg, ctx, slot);
       const mail = buildEmail(cfg, slot, ctx);
       if (!mail) return json(res, 200, { slot, note: "This email would not be sent today (rest day or finished)." });
       res.statusCode = 200;

@@ -7,6 +7,7 @@ import { SUPABASE_URL as PUBLIC_URL } from "../../js/config.js";
 // so a link to any other alias (even of this same deployment) opens a
 // signed-out, empty copy of the app. APP_URL overrides it.
 const DEFAULT_APP_URL = "https://goalsforarnav.vercel.app";
+export const DEFAULT_CALENDAR_URL = "https://calendarforarnav.vercel.app";
 
 export const MAX_EXTRA = 15;
 
@@ -58,6 +59,11 @@ export function config() {
     cronSecret: env.CRON_SECRET || "",
     tz: env.GOALS_TZ || "America/New_York",
     appUrl: (env.APP_URL || DEFAULT_APP_URL).replace(/\/+$/, ""),
+    // The calendar app (calendarforarnav): its agenda goes into the morning
+    // email. CALENDAR_SECRET is that app's CRON_SECRET. Optional: without it
+    // the morning email just has no calendar section.
+    calendarUrl: (env.CALENDAR_URL || DEFAULT_CALENDAR_URL).replace(/\/+$/, ""),
+    calendarSecret: (env.CALENDAR_SECRET || "").trim(),
     name: (env.GOALS_NAME || "").trim(),
     // Local hours (in GOALS_TZ). Each slot sends at the first hourly check
     // inside its window, then never again that day.
