@@ -24,7 +24,7 @@ This README is the project's single source of truth: what exists, why, and the r
 4. **The server decides what gets emailed.** The app may only *hint* (`POST /api/notify`, `POST /api/boost`); the server re-reads progress from the database, checks the session is the owner's, and decides. Never send email from the browser.
 5. **Every email is sent exactly once.** Claim a row in `email_log` first, send, then mark it sent; a failed send releases the claim so the next run retries. New kinds of email need a slot name the table's check constraint allows (a migration in `supabase/migrations/`, applied to the Supabase project "Focus").
 6. **Fail loudly.** Errors say exactly what to fix (see `hint()` in `api/_lib/supabase.js`). Scheduled failures email an alert. Silence must always mean "working".
-7. **No build step, one dependency** (Nodemailer). Static files plus four serverless routes in `api/`. Vercel Hobby limits: daily crons only (hence 24 of them), 12 functions max.
+7. **No build step, one dependency** (Nodemailer). Static files plus five serverless routes in `api/`. Vercel Hobby limits: daily crons only (hence 24 of them), 12 functions max.
 8. **Honest, not hype.** Numbers come from the record. Praise what happened, name what didn't. Don't add features that let the user fake progress.
 9. **Keep it simple to navigate.** Five tabs, no more. New things go inside an existing tab or under More.
 10. **Never commit secrets.** Server keys live in Vercel env vars only; `js/config.js` holds only the public publishable key.
@@ -33,7 +33,7 @@ This README is the project's single source of truth: what exists, why, and the r
 
 | Tab | What's there |
 |---|---|
-| **Today** | Everything to do today, in order: warnings, the progress ring, your habits (one tap each), the next lesson, the checklist, rewards and *Close the day*. |
+| **Today** | Everything to do today, in order: warnings, the progress ring, your habits (one tap each), today on your calendar, the next lesson, the checklist, rewards and *Close the day*. |
 | **Habits** | Your daily habits: this week's score, each habit's chain and week, the two-minute version, add / edit / archive, last week's scorecard. |
 | **Courses** | Every lesson of both courses by section. Tick anything in any order. |
 | **Progress** | The chain heatmap, stats, savings jar, check-in trends, milestones. |
@@ -68,7 +68,7 @@ All sent from your Gmail with Nodemailer, to `EMAIL_TO` with `EMAIL_CC` as BCC (
 
 | Email | Trigger |
 |---|---|
-| **Morning plan** | Hourly cron, first run after 7:00 local. Lessons + today's habits. On course rest days or after the courses end: a habits-only morning email (if any are scheduled). |
+| **Morning plan** | Hourly cron, first run after 7:00 local. Lessons + today's habits + today's calendar (see [Calendar integration](#calendar-integration)). On course rest days or after the courses end: a habits-only morning email (if any are scheduled). |
 | **Midday check-in** | Weekend morning block done, or the whole weekday done (sent the moment it happens), else 14:00 local. |
 | **Evening wrap** | First run after 20:00 local. Lists habits still open. On course rest days: only if a habit is still open. |
 | **Partner report** | Morning, to `PARTNER_EMAILS`, about yesterday (now including yesterday's habits). |
@@ -196,6 +196,19 @@ To check it at any time, replace `SECRET`:
 
 Honest limits: the emails only know what has synced, so ticks on a signed-out device are invisible to them. Vercel Hobby crons can fire up to 59 minutes into their hour, so "7:00" means 7:00 to 7:59.
 
+## Calendar integration
+
+Goals and [Calendar](https://github.com/Chouksey-Arnav/calendarforarnav) share one Supabase project and one account, so each can show the other:
+
+- **Today tab:** a "Today on your calendar" card, right under your habits, lists today's events and open to-dos. It loads after the tab renders, from the calendar's `/api/agenda` with your session token, and hides itself if you're signed out or the calendar is unreachable.
+- **Morning email:** the same agenda appears after the checklist and habits, so the study plan is written around the rest of your day. It is in every kind of morning email: course days, rest days, the day the courses finish, and the habits-only morning email after that. The server fetches it with `CALENDAR_SECRET` (the calendar project's `CRON_SECRET`). If it's missing or the calendar is down, the email goes out without that section after at most 5 seconds.
+- **The other way:** `GET /api/today` (your session token) returns today's ring, next lesson and streak as JSON. The calendar shows it as a study card. CORS allows only `CALENDAR_URL`.
+
+| Name | Required | Value |
+|---|---|---|
+| `CALENDAR_SECRET` | no | The calendar project's `CRON_SECRET` |
+| `CALENDAR_URL` | no | Defaults to `https://calendarforarnav.vercel.app` |
+
 ## Olympiad focus
 
 Every lesson was checked against the official [IOAI 2026 syllabus](https://ioai-official.org/wp-content/uploads/2025/10/Syllabus.pdf). Off-syllabus lessons are marked **Optional** and left out of the daily plan (Settings can include them):
@@ -242,13 +255,19 @@ python3 -m http.server 8000   # then open http://localhost:8000
 npm test                      # planner, habits, schedule, email and delivery tests (Node 20+)
 ```
 
-The site is static with no build step. The only dependency is Nodemailer, used by the four serverless routes in `api/` (`cron`, `notify`, `boost`, `login-code`). Vercel serves everything else as-is.
+The site is static with no build step. The only dependency is Nodemailer, used by the five serverless routes in `api/` (`cron`, `notify`, `boost`, `login-code`, `today`). Vercel serves everything else as-is.
 
 Built with help from Claude Code (AI).
 
 ## Changelog
 
 Newest first. Every change adds an entry here (see rule 1).
+
+### 2026-10-13 · Calendar integration (PR #8)
+- **Today on your calendar** (from the new [calendar app](https://github.com/Chouksey-Arnav/calendarforarnav), same Supabase project and account): a card on Today, right under your habits, and a section in every morning email, including the habits-only one after the courses end. Fetched from the calendar's `/api/agenda`; any failure just leaves it out.
+- `GET /api/today`: today's ring, next lesson and streak as JSON for the calendar's study card. Owner's session only; CORS allows `CALENDAR_URL`.
+- New optional env vars `CALENDAR_SECRET` and `CALENDAR_URL`. Serverless routes: four → five.
+- Tests: 87 → 89.
 
 ### 2026-10-12 · Daily habits, an email for everything, simpler navigation
 - **Daily habits** ([`js/dailyhabits.js`](js/dailyhabits.js)): add your own habits (templates for *Atomic Habits* and AP World History), each with a time, place, habit stack, identity, two-minute version and days. One-tap ticking on Today and Habits, per-habit chains, week dots, never-miss-twice warnings, last week's scorecard, edit, archive, restore.

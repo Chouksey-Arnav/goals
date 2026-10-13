@@ -320,3 +320,16 @@ test("sendEvents: daily cap, and nothing without synced progress", async () => {
   assert.equal(f.outbox.length, 0);
   assert.deepEqual(await sendEvents(CFG, { problem: "no-progress" }, { io: f.io }), []);
 });
+
+test("calendar agenda rides on the morning email after the courses end (habits-only morning)", async () => {
+  const { LESSONS } = await import("../js/digest.js");
+  const s = withHabits([habit()]);
+  for (const l of LESSONS) s.completed[l.id] = "2026-10-20"; // finished long before
+  const day = "2026-11-02";
+  const F = dayFacts(s, day);
+  assert.equal(F.finished, true);
+  const agenda = { appUrl: "https://cal.example", events: [{ title: "Robotics meeting", location: "", allDay: false, time: "3:15 PM – 4:45 PM", url: "https://cal.example/#event=1" }], tasks: { open: [] } };
+  const m = compose("morning", F, { ...mailCtx(s), agenda });
+  assert.match(m.subject, /Today's habits/, "the habits-only morning email");
+  assert.match(m.text, /TODAY ON YOUR CALENDAR\n  3:15 PM  Robotics meeting/);
+});

@@ -97,6 +97,13 @@ export async function notify() {
   }
 }
 
+// For calls to the calendar app (same Supabase project, so it accepts this token).
+export async function accessToken() {
+  if (!client || !user) return null;
+  const { data } = await client.auth.getSession();
+  return data.session?.access_token || null;
+}
+
 export async function signOut() {
   if (!client) return;
   await client.auth.signOut();

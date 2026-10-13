@@ -406,3 +406,25 @@ test("failures: auth errors aren't retried, outages alert only at window starts,
   assert.equal(isStale({ claimed_at: ago(600), sent_at: ago(599) }, now), false, "sent is sent");
   assert.ok(STALE_MIN * 60 > 60, "longer than a function can run (maxDuration 60s)");
 });
+
+test("morning email: today's calendar from the calendar app", () => {
+  const agenda = {
+    appUrl: "https://cal.example",
+    events: [
+      { title: "TEDx club monthly meeting", location: "Room 204", allDay: false, time: "11:30 AM – 12:30 PM", url: "https://cal.example/#event=1" },
+      { title: "Volunteering <b>", location: "", allDay: true, time: "All day", url: "https://cal.example/#event=2" },
+    ],
+    tasks: { open: [{ title: "Email Mr. Patel", overdue: true }], doneToday: [] },
+  };
+  const m = compose("morning", dayFacts(fresh(), T), { ...ctx(fresh()), agenda });
+  assert.match(m.text, /TODAY ON YOUR CALENDAR\n  11:30 AM  TEDx club monthly meeting \(Room 204\)\n  All day  Volunteering <b>/);
+  assert.match(m.text, /To-do: Email Mr\. Patel \(overdue\)/);
+  assert.match(m.html, /Volunteering &lt;b&gt;/);
+  assert.doesNotMatch(m.html, /Volunteering <b>/);
+  // No agenda (calendar not configured or down): no section, nothing breaks.
+  const plain = compose("morning", dayFacts(fresh(), T), ctx(fresh()));
+  assert.doesNotMatch(plain.text, /TODAY ON YOUR CALENDAR/);
+  // Empty day: says so.
+  const empty = compose("morning", dayFacts(fresh(), T), { ...ctx(fresh()), agenda: { events: [], tasks: { open: [] } } });
+  assert.match(empty.text, /Nothing else scheduled/);
+});

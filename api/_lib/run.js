@@ -3,6 +3,7 @@
 import { config, missing } from "./env.js";
 import * as DB from "./supabase.js";
 import { sendMail, explainMailError } from "./mailer.js";
+import { fetchAgenda } from "./calendar.js";
 import { dayFacts, zonedParts, reachedHalfway, BY_ID } from "../../js/digest.js";
 import { normalize } from "../../js/state.js";
 import { compose, composePartner, composeDone, composeHabitNew, composeWeekly } from "../../js/emails.js";
@@ -55,6 +56,8 @@ export function mailCtx(cfg, ctx) {
     dayIndex: diffDays(TRACK_START, ctx.day),
     state: ctx.state,
     middayHour: cfg.middayHour,
+    // Today's calendar (calendar app), loaded by withAgenda for the morning email.
+    agenda: ctx.agenda || null,
   };
 }
 
@@ -63,6 +66,12 @@ export function buildEmail(cfg, slot, ctx, extra = {}) {
   if (slot === "partner") return composePartner(ctx.Fy, ctx.F, { name: firstName(ctx.state, cfg), state: ctx.state });
   if (slot === "weekly") return composeWeekly(ctx.F, mailCtx(cfg, ctx));
   return compose(slot, ctx.F, { ...mailCtx(cfg, ctx), ...extra });
+}
+
+// The morning email lists today's calendar. Fetched only for that slot.
+export async function withAgenda(cfg, ctx, slot) {
+  if (slot === "morning" && !ctx.problem && ctx.agenda === undefined) ctx.agenda = await fetchAgenda(cfg, ctx.day);
+  return ctx;
 }
 
 // When there's no data to work from, say so once a morning instead of going
@@ -93,6 +102,7 @@ export function addressing(cfg, slot) {
 export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
   const addr = addressing(cfg, slot);
   if (!addr) return { slot, sent: false, reason: "PARTNER_EMAILS is empty" };
+  await withAgenda(cfg, ctx, slot);
   const mail = ctx.problem ? (slot === "morning" ? setupEmail(cfg, ctx.problem) : null) : buildEmail(cfg, slot, ctx);
   if (!mail) return { slot, sent: false, reason: ctx.problem || "nothing worth sending (rest day, before tracking, or finished)" };
   // The sign-in reminder is for you only, never for copies or partners.
