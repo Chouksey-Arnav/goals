@@ -6,6 +6,7 @@
 import { allLessons, plannable, TRACK_START } from "./data.js";
 import * as P from "./planner.js";
 import * as H from "./habits.js";
+import { habitFacts } from "./dailyhabits.js";
 
 export const LESSONS = allLessons();
 export const BY_ID = Object.fromEntries(LESSONS.map((l) => [l.id, l]));
@@ -88,6 +89,7 @@ export function dayFacts(state, t, keyOf = (ms) => P.dayKey(new Date(ms))) {
     phase: H.reinforcementPhase(shownUp.length),
     savings: H.savingsTotals(state.avoidLog, state.transferred),
     yesterday: dayLog[P.addDays(t, -1)] || {},
+    habits: habitFacts(state, t),
   };
 }
 
