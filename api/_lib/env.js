@@ -11,6 +11,11 @@ export const DEFAULT_CALENDAR_URL = "https://calendarforarnav.vercel.app";
 
 export const MAX_EXTRA = 15;
 
+// Groq's larger open model with strict JSON-schema output (checked on
+// console.groq.com/docs/structured-outputs, Oct 2026). One call a day, so the
+// bigger model costs well under a cent and judges the day better than 20b.
+export const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
+
 // "a@x.com, b@y.com; c@z.com" -> unique, lowercased, without the owner.
 export function parseList(raw, exclude = []) {
   const skip = new Set(exclude.map((e) => e.toLowerCase()));
@@ -65,17 +70,21 @@ export function config() {
     calendarUrl: (env.CALENDAR_URL || DEFAULT_CALENDAR_URL).replace(/\/+$/, ""),
     calendarSecret: (env.CALENDAR_SECRET || "").trim(),
     name: (env.GOALS_NAME || "").trim(),
+    // The end-of-day review (js/review.js) is written by Groq. Optional:
+    // without a key it's written from your record by rules, and still sends.
+    groqKey: (env.GROQ_API_KEY || "").trim(),
+    groqModel: (env.GROQ_MODEL || DEFAULT_GROQ_MODEL).trim(),
     // Local hours (in GOALS_TZ). Each slot sends at the first hourly check
     // inside its window, then never again that day.
     ...emailHours(env, warnings),
   };
 }
 
-export const DEFAULT_HOURS = { morningHour: 7, middayHour: 14, eveningHour: 20 };
+export const DEFAULT_HOURS = { morningHour: 7, middayHour: 14, eveningHour: 20, reviewHour: 22 };
 
-// Hours must be whole numbers 0-23 in order morning < midday < evening, or a
-// window comes out empty and that email silently never sends. Anything else
-// falls back to the defaults, loudly.
+// Hours must be whole numbers 0-23 in order morning < midday < evening <
+// review, or a window comes out empty and that email silently never sends.
+// Anything else falls back to the defaults, loudly.
 export function emailHours(env, warnings = []) {
   const read = (name, d) => {
     const raw = env[name];
@@ -89,9 +98,10 @@ export function emailHours(env, warnings = []) {
     morningHour: read("EMAIL_MORNING_HOUR", DEFAULT_HOURS.morningHour),
     middayHour: read("EMAIL_MIDDAY_HOUR", DEFAULT_HOURS.middayHour),
     eveningHour: read("EMAIL_EVENING_HOUR", DEFAULT_HOURS.eveningHour),
+    reviewHour: read("EMAIL_REVIEW_HOUR", DEFAULT_HOURS.reviewHour),
   };
-  if (!(h.morningHour < h.middayHour && h.middayHour < h.eveningHour)) {
-    warnings.push(`Email hours must go morning < midday < evening (got ${h.morningHour} / ${h.middayHour} / ${h.eveningHour}), using 7 / 14 / 20.`);
+  if (!(h.morningHour < h.middayHour && h.middayHour < h.eveningHour && h.eveningHour < h.reviewHour)) {
+    warnings.push(`Email hours must go morning < midday < evening < review (got ${h.morningHour} / ${h.middayHour} / ${h.eveningHour} / ${h.reviewHour}), using 7 / 14 / 20 / 22.`);
     return { ...DEFAULT_HOURS };
   }
   return h;

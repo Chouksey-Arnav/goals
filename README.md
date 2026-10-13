@@ -1,6 +1,6 @@
 # goals
 
-A daily accountability system built on *Atomic Habits*. Two jobs:
+A daily accountability system built on *Atomic Habits*. Two jobs, and one honest verdict on both every night (see [End-of-day review](#end-of-day-review-groq)):
 
 1. **Your daily habits.** Reading *Atomic Habits*, your AP World History book, anything you want to do every day. You put them in; the app turns each one into a system and emails you when you create it, every time you do it, and every Monday with a scorecard.
 2. **Finish two Udemy courses by October 31, 2026**, on the way to AI Olympiad prep.
@@ -70,18 +70,31 @@ All sent from your Gmail with Nodemailer, to `EMAIL_TO` with `EMAIL_CC` as BCC (
 |---|---|
 | **Morning plan** | Hourly cron, first run after 7:00 local. Lessons + today's habits + today's calendar (see [Calendar integration](#calendar-integration)). On course rest days or after the courses end: a habits-only morning email (if any are scheduled). |
 | **Midday check-in** | Weekend morning block done, or the whole weekday done (sent the moment it happens), else 14:00 local. |
-| **Evening wrap** | First run after 20:00 local. Lists habits still open. On course rest days: only if a habit is still open. |
+| **Evening wrap** | First run after 20:00 local (until the review hour). Lists habits still open. On course rest days: only if a habit is still open. |
+| **Day review** | First run after 22:00 local (`EMAIL_REVIEW_HOUR`). The whole day judged: lessons, habits and the calendar's to-dos, a grade, what didn't happen, the pattern, three orders for tomorrow. Written by Groq from your record; see [End-of-day review](#end-of-day-review-groq). Not sent when there's nothing to judge. |
 | **Partner report** | Morning, to `PARTNER_EMAILS`, about yesterday (now including yesterday's habits). |
 | **Weekly kickoff** | Monday morning window: last week's habit scorecard, the weakest habit to fix, this week's plan. With no habits: a prompt to add them. |
 | **Done** | **Every lesson ticked and every habit done**, the moment it syncs. Things synced together (e.g. after being offline) share one email. If the same moment earns the midday email, the completions ride on it instead of sending two. |
 | **New habit** | **Every habit you create**: "Here's your habit. Let's make it real." Your implementation intention, the four laws applied to it, the two-minute version, never miss twice. |
 | **Send me motivation** | The Today button, on demand (max 1 a minute, 8 a day). |
 | **Sign-in code** | Signing in. |
-| **Failure alert** | A scheduled run fails (at most at 7:00, 14:00, 20:00). |
+| **Failure alert** | A scheduled run fails (at most at 7:00, 14:00, 20:00, 22:00). |
 
 How *Done* and *New habit* are delivered: after every synced tick/habit/new habit the app calls `POST /api/notify`. The server checks the session is the owner's, re-reads progress, and emails whatever completed or was created **today** that has no `email_log` row yet (slots `done:<lesson id>`, `habit:<habit id>`, `new:<habit id>`). Every hourly cron run does the same check as a catch-up, so a dropped request (offline, tab closed) delays the email by at most an hour instead of losing it. Unticking and re-ticking never sends twice. Cap: 60 of these a day. Limit: a tick that only syncs after midnight is not emailed (it's no longer "today").
 
-Volume check: a full day is about 3 daily emails + ~10 lessons + your habits ≈ 15 emails, each to you plus every `EMAIL_CC` address. Consumer Gmail allows roughly 500 recipients a day, so 15 emails × (1 + 15 copies) = 240 still fits, but if `EMAIL_CC` holds other people they will get every tick too. Keep `EMAIL_CC` to your own addresses.
+Volume check: a full day is about 4 daily emails + ~10 lessons + your habits ≈ 15 emails, each to you plus every `EMAIL_CC` address. Consumer Gmail allows roughly 500 recipients a day, so 15 emails × (1 + 15 copies) = 240 still fits, but if `EMAIL_CC` holds other people they will get every tick too. Keep `EMAIL_CC` to your own addresses.
+
+## End-of-day review (Groq)
+
+[`js/review.js`](js/review.js) (pure, tested in `tests/review.test.js`), sent by the hourly cron in the review window. It's built so the model **can't** sugarcoat:
+
+1. **Facts, from code.** `reviewFacts()` turns the record into numbered facts, each with a status the code decides: `done`, `partial`, `missed` or `info`. Lessons (planned vs done, which ones), fast ticks (a long lesson ticked within 3 minutes of the last one), lessons ticked without writing the core idea, pace vs Oct 31, the chain and contract breaches, every habit (two-minute version = partial), avoidance slips, and from the calendar: to-dos done, to-dos due today and not done, overdue to-dos (and how late), work blocks you scheduled and skipped, deadlines, and jotting far more to-dos than you finish. Calendar events are `info` ("attendance not tracked"), never accomplishments; check-ins and the daily win are labeled self-reported.
+2. **The grade, from code.** `gradeDay()`: share of commitments kept, course plan 50 / habits 25 / calendar to-dos 25 (renormalized over what exists that day). Fast ticks cap it at C; a broken chain or breach caps it at D. Groq is told the grade and can't change it.
+3. **Words, from Groq.** `openai/gpt-oss-120b` (strict JSON schema, reasoning `medium`; one call a day, well under a cent). The prompt (`REVIEW_SYSTEM`) asks for a ruthless mentor: misses first and specific, their cost named, no praise padding, no comfort, every line citing a fact id, three concrete orders for tomorrow placed around tomorrow's calendar, one hard question.
+4. **Every line checked.** `checkReview()` drops a "done" line citing a fact that wasn't done, any line citing an unknown fact, any number that isn't in the facts, any sentence with praise or comfort ("great job", "it's okay", "tomorrow is a new day", "!", emojis…), and a headline without the right grade letter. Every missed fact the model skipped is added back in the record's own words: nothing missed can be hidden.
+5. **Always sends.** No `GROQ_API_KEY`, a timeout, a rate limit or an answer that doesn't survive the checks: `fallbackReview()` writes the same email from the facts alone (and says so in the footer).
+
+The email: grade badge, headline, verdict, **Didn't happen**, **Done**, **The pattern**, **Tomorrow**, **Before bed**. It only knows what synced; the last sync time is one of the facts. Preview: `/api/cron?slot=review&dry=1&key=SECRET`; facts, grade and dropped lines as JSON: add `&format=json`.
 
 ## The course plan
 
@@ -184,14 +197,16 @@ The server reads `progress` and writes `email_log` with the secret key (`service
 | `EMAIL_CC` | no | Up to 15 comma-separated addresses that get copies of your 3 daily emails |
 | `PARTNER_EMAILS` | no | Up to 15 comma-separated accountability partners for the morning partner report |
 | `GOALS_NAME` | no | Your first name, used in the greeting and in partner report subjects. Defaults to the first name on your signed contract. Set it if you have partners, or reports say "Goals check-in". |
-| `EMAIL_MORNING_HOUR` / `EMAIL_MIDDAY_HOUR` / `EMAIL_EVENING_HOUR` | no | Local hours, default 7 / 14 / 20 |
+| `EMAIL_MORNING_HOUR` / `EMAIL_MIDDAY_HOUR` / `EMAIL_EVENING_HOUR` / `EMAIL_REVIEW_HOUR` | no | Local hours, default 7 / 14 / 20 / 22, in that order |
+| `GROQ_API_KEY` | no | Writes the end-of-day review ([console.groq.com/keys](https://console.groq.com/keys); the calendar's key works). Without it the review is written from your record by rules. |
+| `GROQ_MODEL` | no | Defaults to `openai/gpt-oss-120b`. Only if Groq retires it. |
 
 Then redeploy, sign in on the site with the `EMAIL_TO` address, and tick one lesson.
 
 To check it at any time, replace `SECRET`:
 
 - `/api/cron?status=1&key=SECRET` shows config, local time, what was sent today, your habits and any completion emails still pending.
-- `/api/cron?slot=morning&dry=1&key=SECRET` previews an email in the browser (`slot=partner`, `weekly`, `done` (today's latest completion) and `new` (your newest habit) work too; add `&format=text` for plain text).
+- `/api/cron?slot=morning&dry=1&key=SECRET` previews an email in the browser (`slot=review`, `slot=partner`, `weekly`, `done` (today's latest completion) and `new` (your newest habit) work too; add `&format=text` for plain text).
 - `/api/cron?slot=evening&force=1&key=SECRET` sends one now, ignoring "already sent".
 
 Honest limits: the emails only know what has synced, so ticks on a signed-out device are invisible to them. Vercel Hobby crons can fire up to 59 minutes into their hour, so "7:00" means 7:00 to 7:59.
@@ -202,6 +217,7 @@ Goals and [Calendar](https://github.com/Chouksey-Arnav/calendarforarnav) share o
 
 - **Today tab:** a "Today on your calendar" card, right under your habits, lists today's events and open to-dos. It loads after the tab renders, from the calendar's `/api/agenda` with your session token, and hides itself if you're signed out or the calendar is unreachable.
 - **Morning email:** the same agenda appears after the checklist and habits, so the study plan is written around the rest of your day. It is in every kind of morning email: course days, rest days, the day the courses finish, and the habits-only morning email after that. The server fetches it with `CALENDAR_SECRET` (the calendar project's `CRON_SECRET`). If it's missing or the calendar is down, the email goes out without that section after at most 5 seconds.
+- **End-of-day review:** today's and tomorrow's agenda, plus the calendar's `tasks.blocks` (work blocks that started today, done or not) and `tasks.addedToday` (how many to-dos you jotted). Without `CALENDAR_SECRET` the review covers Goals only and says so.
 - **The other way:** `GET /api/today` (your session token) returns today's ring, next lesson and streak as JSON. The calendar shows it as a study card. CORS allows only `CALENDAR_URL`.
 
 | Name | Required | Value |
@@ -247,12 +263,13 @@ In [`supabase/migrations`](supabase/migrations), applied in order to the Supabas
 | `20261012020000_boost_throttle.sql` | `claim_boost_send` |
 | `20261012030000_grant_service_role.sql` | explicit grants for the secret key |
 | `20261013000000_email_log_events.sql` | `weekly`, `done:*`, `habit:*`, `new:*` slots. **Applied 2026-10-12.** |
+| `20261014000000_email_log_review_slot.sql` | `review` slot. **Applied 2026-10-13** (as `email_log_review_slot`). |
 
 ## Run locally
 
 ```bash
 python3 -m http.server 8000   # then open http://localhost:8000
-npm test                      # planner, habits, schedule, email and delivery tests (Node 20+)
+npm test                      # planner, habits, schedule, email, review and delivery tests (Node 20+)
 ```
 
 The site is static with no build step. The only dependency is Nodemailer, used by the five serverless routes in `api/` (`cron`, `notify`, `boost`, `login-code`, `today`). Vercel serves everything else as-is.
@@ -262,6 +279,14 @@ Built with help from Claude Code (AI).
 ## Changelog
 
 Newest first. Every change adds an entry here (see rule 1).
+
+### 2026-10-13 · End-of-day review (Groq)
+- **Day review email** at 22:00 local ([`js/review.js`](js/review.js)): the whole day, Goals and Calendar, judged from facts the code computes, graded by code, written by Groq (`openai/gpt-oss-120b`) as a ruthless mentor. Every line is checked against the record: no claimed accomplishments that didn't happen, no invented numbers, no praise or comfort phrases, every miss shown. Falls back to a rules-written review without Groq.
+- New optional env vars `GROQ_API_KEY`, `GROQ_MODEL`, `EMAIL_REVIEW_HOUR` (default 22; must come after the evening hour). The evening wrap's window now ends at the review hour.
+- Migration `20261014000000_email_log_review_slot.sql` (`review` slot), applied to Focus.
+- Uses the calendar's new `/api/agenda` fields `tasks.blocks` and `tasks.addedToday` (calendarforarnav, same date).
+- `/api/cron?slot=review&dry=1` previews it; `&format=json` shows facts, grade and dropped lines. `?status=1` shows whether Groq and the calendar are configured.
+- Tests: 89 → 100.
 
 ### 2026-10-13 · Calendar integration (PR #8)
 - **Today on your calendar** (from the new [calendar app](https://github.com/Chouksey-Arnav/calendarforarnav), same Supabase project and account): a card on Today, right under your habits, and a section in every morning email, including the habits-only one after the courses end. Fetched from the calendar's `/api/agenda`; any failure just leaves it out.

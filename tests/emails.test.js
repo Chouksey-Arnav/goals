@@ -348,10 +348,11 @@ function check2(mail) {
 
 test("emailHours: out-of-order or invalid hours fall back loudly, never to an empty window", () => {
   const w = [];
-  assert.deepEqual(emailHours({}, w), { morningHour: 7, middayHour: 14, eveningHour: 20 });
-  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "6", EMAIL_EVENING_HOUR: "21" }, w), { morningHour: 6, middayHour: 14, eveningHour: 21 });
+  assert.deepEqual(emailHours({}, w), { morningHour: 7, middayHour: 14, eveningHour: 20, reviewHour: 22 });
+  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "6", EMAIL_EVENING_HOUR: "21" }, w), { morningHour: 6, middayHour: 14, eveningHour: 21, reviewHour: 22 });
   assert.equal(w.length, 0);
-  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "8", EMAIL_MIDDAY_HOUR: "7" }, w), { morningHour: 7, middayHour: 14, eveningHour: 20 });
+  assert.deepEqual(emailHours({ EMAIL_MORNING_HOUR: "8", EMAIL_MIDDAY_HOUR: "7" }, w), { morningHour: 7, middayHour: 14, eveningHour: 20, reviewHour: 22 });
+  assert.deepEqual(emailHours({ EMAIL_REVIEW_HOUR: "19" }, []).reviewHour, 22, "a review before the evening wrap is rejected");
   assert.match(w[0], /morning < midday < evening/);
   assert.deepEqual(emailHours({ EMAIL_EVENING_HOUR: "8pm" }, w).eveningHour, 20);
   assert.match(w[1], /"8pm" is not a whole hour/);

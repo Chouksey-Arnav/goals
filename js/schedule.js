@@ -9,16 +9,18 @@
 //   morning  [morningHour, min(morningHour + 5, middayHour))
 //   midday   [middayHour, eveningHour)   fallback if /api/notify didn't send it
 //            early (weekends: morning block done; weekdays: whole sitting done)
-//   evening  [eveningHour, 24)
+//   evening  [eveningHour, reviewHour)
+//   review   [reviewHour, 24)   the end-of-day review (js/review.js)
 //   partner  same window as morning: yesterday's record, once it's final
 //   weekly   same window as morning, Mondays only: last week's habit scorecard
 // Each slot sends at most once per day (enforced by the email_log table).
 
-export function windows({ morningHour, middayHour, eveningHour }) {
+export function windows({ morningHour, middayHour, eveningHour, reviewHour = 24 }) {
   return {
     morning: [morningHour, Math.min(morningHour + 5, middayHour)],
     midday: [middayHour, eveningHour],
-    evening: [eveningHour, 24],
+    evening: [eveningHour, reviewHour],
+    review: [reviewHour, 24],
     partner: [morningHour, Math.min(morningHour + 5, middayHour)],
     weekly: [morningHour, Math.min(morningHour + 5, middayHour)],
   };
@@ -31,7 +33,7 @@ const inside = (h, [a, b]) => h >= a && h < b;
 // the weekly kickoff only on the first day of the week (Monday).
 export function dueSlots(hour, sent, cfg, { partners = false, weekStart = false } = {}) {
   const w = windows(cfg);
-  const slots = ["morning", "midday", "evening", ...(partners ? ["partner"] : []), ...(weekStart ? ["weekly"] : [])];
+  const slots = ["morning", "midday", "evening", "review", ...(partners ? ["partner"] : []), ...(weekStart ? ["weekly"] : [])];
   return slots.filter((slot) => inside(hour, w[slot]) && !sent[slot]);
 }
 

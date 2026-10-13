@@ -11,6 +11,8 @@ import { completionEvents, newHabitEvents, isEventSlot } from "../../js/dailyhab
 import { nudgeAllowed } from "../../js/schedule.js";
 import { diffDays, addDays } from "../../js/planner.js";
 import { TRACK_START } from "../../js/data.js";
+import { reviewFacts, gradeDay, buildReviewMessages, checkReview, fallbackReview, composeReview, REVIEW_SCHEMA } from "../../js/review.js";
+import { askGroq } from "./groq.js";
 
 export { config, missing };
 
@@ -63,15 +65,50 @@ export function mailCtx(cfg, ctx) {
 
 // extra: { justDone } lists completions that rode along on this email.
 export function buildEmail(cfg, slot, ctx, extra = {}) {
+  if (slot === "review") return ctx.review?.mail || null;
   if (slot === "partner") return composePartner(ctx.Fy, ctx.F, { name: firstName(ctx.state, cfg), state: ctx.state });
   if (slot === "weekly") return composeWeekly(ctx.F, mailCtx(cfg, ctx));
   return compose(slot, ctx.F, { ...mailCtx(cfg, ctx), ...extra });
 }
 
-// The morning email lists today's calendar. Fetched only for that slot.
-export async function withAgenda(cfg, ctx, slot) {
-  if (slot === "morning" && !ctx.problem && ctx.agenda === undefined) ctx.agenda = await fetchAgenda(cfg, ctx.day);
+// The morning email lists today's calendar; the review judges it. Fetched
+// only for those slots. The review is written here (it needs Groq, which is
+// async) and buildEmail just picks it up.
+export async function withAgenda(cfg, ctx, slot, io = {}) {
+  if ((slot === "morning" || slot === "review") && !ctx.problem && ctx.agenda === undefined) ctx.agenda = await fetchAgenda(cfg, ctx.day);
+  if (slot === "review" && !ctx.problem && ctx.review === undefined) ctx.review = await writeReview(cfg, ctx, io);
   return ctx;
+}
+
+const WEEKDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// The end-of-day review (js/review.js): facts and grade from the record,
+// words from Groq, every line checked. Returns { mail, grade, facts, source,
+// dropped, error } or { mail: null } when there's nothing to judge.
+// io: { ask, agenda } swap Groq and the calendar for tests.
+export async function writeReview(cfg, ctx, { ask = askGroq, agenda = fetchAgenda } = {}) {
+  const tomorrowAgenda = await agenda(cfg, addDays(ctx.day, 1)).catch(() => null);
+  const { facts, tomorrow } = reviewFacts(ctx.F, ctx.state, { agenda: ctx.agenda || null, tomorrowAgenda, syncedAt: ctx.syncedAt });
+  const grade = gradeDay(facts);
+  if (!grade) return { mail: null, facts, grade: null };
+  let review = null;
+  let error = null;
+  let model = null;
+  if (cfg.groqKey) {
+    try {
+      const weekday = WEEKDAY[new Date(`${ctx.day}T12:00:00Z`).getUTCDay()];
+      const r = await ask(cfg, buildReviewMessages({ day: ctx.day, weekday, grade, facts, tomorrow, name: firstName(ctx.state, cfg) }), REVIEW_SCHEMA);
+      model = r.model;
+      review = checkReview(r.json, { facts, grade, tomorrow });
+      if (!review) error = "Groq's answer didn't survive the checks (no usable verdict).";
+    } catch (e) {
+      error = e.message;
+      console.error("Review: Groq failed, writing it from the record:", e.message);
+    }
+  }
+  if (!review) review = fallbackReview({ facts, grade });
+  const mail = composeReview(review, grade, { day: ctx.day, appUrl: cfg.appUrl, calendarUrl: ctx.agenda?.appUrl || cfg.calendarUrl });
+  return { mail, grade, facts, source: review.source, model, dropped: review.dropped, error };
 }
 
 // When there's no data to work from, say so once a morning instead of going
@@ -205,7 +242,7 @@ async function sendClaimed(cfg, day, slots, mail, addr, { db, send }) {
 // lines up with an email you should have had. Gmail itself failing can't be
 // reported this way; that's what /api/cron?status=1 is for.
 export function isAlertHour(cfg, hour) {
-  return [cfg.morningHour, cfg.middayHour, cfg.eveningHour].includes(hour);
+  return [cfg.morningHour, cfg.middayHour, cfg.eveningHour, cfg.reviewHour].includes(hour);
 }
 
 export async function sendAlert(cfg, { day, hour, errors }) {
