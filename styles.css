@@ -619,3 +619,47 @@ input[type="range"] { width: 100%; accent-color: var(--accent); margin: 8px 0 12
 .cal-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cal-title small { font-weight: 500; color: var(--muted); }
 .cal-now { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent, #6366f1); }
+
+/* =====================================================================
+   Your daily habits (js/dailyhabits.js) and the simpler navigation
+   ===================================================================== */
+.habit-empty { display: flex; gap: 14px; align-items: center; justify-content: space-between; }
+.habit-empty .btn { flex: none; }
+.habit-rows { display: grid; gap: 8px; }
+.habit-row { display: flex; gap: 8px; align-items: stretch; }
+.habit-row .lesson { flex: 1; grid-template-columns: auto 1fr; }
+.habit-row .btn { flex: none; }
+.habits-done { box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--good) 40%, transparent); }
+.habit-card.is-done { border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.h-top { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; }
+.h-name { font-family: var(--display); font-weight: 700; font-size: 19px; line-height: 1.25; }
+.h-streak { font-family: var(--display); font-weight: 700; font-size: 18px; white-space: nowrap; }
+.hweek { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 12px; max-width: 360px; }
+.hd {
+  aspect-ratio: 1; max-height: 44px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--bg-2);
+  font-weight: 700; font-size: 12px; color: var(--faint); padding: 0;
+}
+.hd.on { background: var(--good); border-color: var(--good); color: #fff; }
+.hd.on.min { background: color-mix(in srgb, var(--good) 55%, var(--bg-2)); }
+.hd.miss { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 40%, transparent); color: var(--bad); }
+.hd.off { opacity: 0.35; border-style: dashed; }
+.hd.future { opacity: 0.55; }
+.hd.today { box-shadow: 0 0 0 2px var(--accent-2); }
+.hd:disabled { cursor: default; }
+.h-more { margin-top: 12px; }
+.h-more summary { cursor: pointer; color: var(--muted); }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.day { display: grid; place-items: center; cursor: pointer; }
+.day input { position: absolute; opacity: 0; pointer-events: none; }
+.day span { width: 100%; text-align: center; padding: 9px 0; border-radius: 10px; border: 1px solid var(--line-2); background: var(--bg-2); font-size: 12px; font-weight: 700; color: var(--faint); }
+.day input:checked + span { background: var(--grad); color: #fff; border-color: transparent; }
+.day input:focus-visible + span { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.fill-bad { height: 100%; border-radius: inherit; background: var(--bad); }
+.more-links { display: grid; gap: 4px; padding: 8px; }
+.more-link { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; padding: 12px 10px; border-radius: 12px; text-decoration: none; color: inherit; }
+.more-link:hover { background: var(--bg-2); }
+.more-link b { display: block; }
+.ml-i { font-size: 20px; text-align: center; }
+.ml-go { color: var(--faint); font-weight: 700; }
+.back-link { color: var(--accent-2); text-decoration: none; font-weight: 600; font-size: 14px; }
+@media (max-width: 420px) { .habit-empty { flex-direction: column; align-items: stretch; } }

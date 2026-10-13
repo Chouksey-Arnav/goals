@@ -79,16 +79,19 @@ export async function verifyCode(email, code) {
   return { error: error ? "That code is wrong or expired. Request a new one." : null };
 }
 
-// Ask the server to send the midday email if you've just reached halfway.
-// The server re-checks everything from the database; this is only a hint.
-export async function nudge() {
+// After a synced tick, habit or new habit: ask the server to email whatever
+// is new (completion, new-habit plan, or the midday email). The server
+// re-checks everything from the database; this is only a hint, and the
+// hourly cron catches anything this call misses. Returns null on failure.
+export async function notify() {
   if (!client || !user) return null;
   try {
     const { data } = await client.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return null;
-    const res = await fetch("/api/nudge", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
-    return await res.json().catch(() => null);
+    const res = await fetch("/api/notify", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const body = await res.json().catch(() => null);
+    return res.ok ? body : null;
   } catch {
     return null;
   }

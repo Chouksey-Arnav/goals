@@ -2,6 +2,7 @@
 // email server, so both read an old or partial save the same way.
 
 import { COURSES, DEADLINE } from "./data.js";
+import { normalizeHabits } from "./dailyhabits.js";
 
 export const DEFAULT_SETTINGS = {
   weekdayMin: 150,
@@ -72,6 +73,8 @@ export function normalize(s) {
   s.milestones = s.milestones || {};
   s.penaltyPaid = s.penaltyPaid || {};
   s.contractLog = s.contractLog || [];
+  s.habits = normalizeHabits(s.habits); // your own daily habits (js/dailyhabits.js)
+  s.habitLog = s.habitLog && typeof s.habitLog === "object" ? s.habitLog : {}; // { date: { habitId: "full"|"min" } }
   const c = { ...DEFAULT_CONTRACT, ...(s.contract || {}) };
   c.partners = [0, 1].map((i) => ({ name: "", contact: "", ...(c.partners?.[i] || {}) }));
   c.partnerSigs = [0, 1].map((i) => c.partnerSigs?.[i] || "");

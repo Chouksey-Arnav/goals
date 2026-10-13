@@ -8,6 +8,7 @@ import * as D from "./digest.js";
 import * as Cheers from "./cheers.js";
 import { fresh, normalize } from "./state.js";
 import { PRINCIPLES, LAW_NAMES, pickPrinciple } from "./principles.js";
+import * as DH from "./dailyhabits.js";
 
 // ---------- state
 
@@ -161,6 +162,7 @@ function chainStrip(F) {
 // ---------- views
 
 let justDone = null; // last lesson ticked this session (drives "lock it in")
+let notifyPending = false; // something worth an email happened since the last /api/notify
 
 function viewToday() {
   const F = facts();
@@ -342,7 +344,7 @@ function viewToday() {
 
   const stats = `
     <section class="card">
-      <h2>Don't break the chain <a class="right" href="#tracker">Tracker →</a></h2>
+      <h2>Don't break the chain <a class="right" href="#tracker">Progress →</a></h2>
       ${chainStrip(F)}
       <div class="stats" style="margin-top:14px">
         <div class="stat"><div class="num"><span class="flame">🔥</span> ${F.streak}</div><div class="lbl">day streak · best ${F.best}</div></div>
@@ -359,7 +361,7 @@ function viewToday() {
       <button class="btn sm primary" data-action="boost" ${Sync.status.email ? "" : "disabled"}>⚡ Send me motivation</button>
     </section>`;
 
-  return `<div class="view">${banners.join("")}${hero}${calendarCard()}${lockCard}${nextCard}${boostCard}${ritualCard}${list}${rewardCard(F, complete)}${closeDayCard(F)}${aheadCard}${extraCard}${stats}</div>`;
+  return `<div class="view">${banners.join("")}${hero}${habitsTodayCard(F)}${calendarCard()}${lockCard}${nextCard}${ritualCard}${list}${boostCard}${rewardCard(F, complete)}${closeDayCard(F)}${aheadCard}${extraCard}${stats}</div>`;
 }
 
 // ---------- today on the calendar (the calendar app, same account)
@@ -910,6 +912,7 @@ function viewSystem() {
   const F = facts();
   const s = state.settings;
   return `<div class="view">
+    <a class="back-link" href="#settings">← More</a>
     <section class="card">
       <blockquote>What is immediately rewarded is repeated. What is immediately punished is avoided.<cite>The Cardinal Rule of Behavior Change, Atomic Habits</cite></blockquote>
       <div class="loop" aria-label="The habit loop">
@@ -994,13 +997,236 @@ function viewSystem() {
   </div>`;
 }
 
+
+// ---------- your daily habits (js/dailyhabits.js)
+
+// Today tab: every habit due today, one tap each. Tap again to undo.
+function habitsTodayCard(F) {
+  const H = F.habits;
+  if (!H.list.length) {
+    return `<section class="card habit-empty"><div><b>Your daily habits</b><div class="small muted">Read Atomic Habits, your AP World History book, anything you want to do every day. Each one gets a time, a place, a two-minute version and an email when you do it.</div></div>
+      <a class="btn sm primary" href="#habits/add">+ Add habits</a></section>`;
+  }
+  if (!H.due.length) {
+    return `<section class="card"><h2>Habits today <a class="right" href="#habits">All habits →</a></h2><p class="small muted" style="margin:0">None scheduled today. Rest is part of the system.</p></section>`;
+  }
+  return `<section class="card ${H.allDone ? "habits-done" : ""}">
+    <h2>Habits today <span class="right">${H.done.length}/${H.due.length} · <a href="#habits">all →</a></span></h2>
+    <div class="habit-rows">${H.due.map(habitRow).join("")}</div>
+    ${H.open.some((x) => x.missRun >= 1) ? `<p class="small" style="margin:10px 0 0;color:var(--bad)">Missed one last time. Never miss twice: the two-minute version counts.</p>` : ""}
+  </section>`;
+}
+
+function habitRow(x) {
+  const { h, status } = x;
+  const meta = status
+    ? `${status === "min" ? "two-minute version · " : ""}🔥 ${x.streak}`
+    : [h.amount, h.time, `🔥 ${x.streak}`].filter(Boolean).join(" · ");
+  return `<div class="habit-row ${status ? "done" : ""}">
+    <button class="lesson ${status ? "done" : ""}" data-action="habit-do" data-id="${h.id}" data-mode="full" aria-pressed="${!!status}"
+      aria-label="${status ? "Undo" : "Done"}: ${esc(h.name)}">
+      <span class="box">${CHECK_SVG}</span>
+      <span><span class="lt" style="display:block">${esc(h.name)}</span><span class="ln">${esc(meta)}</span></span>
+    </button>
+    ${status ? "" : `<button class="btn sm ghost" data-action="habit-do" data-id="${h.id}" data-mode="min" title="${esc(h.twoMin)}">2-min</button>`}
+  </div>`;
+}
+
+// Edit form state: null, or { id?: string, v: field values }.
+let habitForm = null;
+
+function weekDots(x, t) {
+  return `<div class="hweek" role="group" aria-label="This week">${x.week.days
+    .map((d) => {
+      const cls = d.status ? `on ${d.status}` : !d.sched ? "off" : d.future ? "future" : d.today ? "open" : "miss";
+      const can = !d.future && d.k >= x.h.created;
+      const lbl = `${fmtDate(d.k)}: ${d.status === "min" ? "two-minute version" : d.status ? "done" : !d.sched ? "not scheduled" : d.future ? "upcoming" : d.today ? "not yet" : "missed"}`;
+      return `<button class="hd ${cls} ${d.today ? "today" : ""}" ${can ? `data-action="habit-day" data-id="${x.h.id}" data-day="${d.k}"` : "disabled"} title="${esc(lbl)}" aria-label="${esc(lbl)}">${d.name[0]}</button>`;
+    })
+    .join("")}</div>`;
+}
+
+function habitCard(x, t) {
+  const { h, status } = x;
+  const warn =
+    !status && x.missRun === 1
+      ? `<p class="small" style="margin:10px 0 0;color:var(--bad)">Missed last time. Never miss twice: <b>${esc(h.twoMin)}</b>.</p>`
+      : !status && x.missRun >= 2
+        ? `<p class="small" style="margin:10px 0 0;color:var(--bad)">Missed ${x.missRun} in a row. The wrong habit is forming. Today, just the two-minute version: <b>${esc(h.twoMin)}</b>.</p>`
+        : "";
+  const act = status
+    ? `<button class="btn sm good" data-action="habit-do" data-id="${h.id}" data-mode="${status}">✓ ${status === "min" ? "Two-minute version done" : "Done today"} · undo</button>`
+    : `<button class="btn sm primary" data-action="habit-do" data-id="${h.id}" data-mode="full">✓ Done${x.sched ? "" : " (bonus)"}</button>
+       <button class="btn sm ghost" data-action="habit-do" data-id="${h.id}" data-mode="min">Two-minute version</button>`;
+  return `<section class="card habit-card ${status ? "is-done" : ""}">
+    <div class="h-top">
+      <div><div class="h-name">${esc(h.name)}</div><div class="small muted">${esc(DH.intention(h))}</div></div>
+      <div class="h-streak" title="best ${x.best}">🔥 ${x.streak}</div>
+    </div>
+    ${weekDots(x, t)}
+    <div class="small faint" style="margin-top:4px">${x.week.done}/${x.week.scheduled} this week${x.sched ? "" : " · not scheduled today"}</div>
+    ${warn}
+    <div class="btn-row" style="margin-top:12px">${act}</div>
+    <details class="h-more"><summary class="small">The system for this habit</summary>
+      ${h.after ? `<p class="small" style="margin:8px 0 0"><b>Stack:</b> ${esc(DH.stack(h))}</p>` : ""}
+      <p class="small" style="margin:8px 0 0"><b>Two-minute version:</b> ${esc(h.twoMin)}</p>
+      ${h.identity ? `<p class="small" style="margin:8px 0 0"><b>Votes for:</b> ${esc(h.identity)}</p>` : ""}
+      <p class="small faint" style="margin:8px 0 0">Best streak ${x.best} · since ${fmtDate(h.created, { month: "short", day: "numeric" })}</p>
+      <div class="btn-row" style="margin-top:10px"><button class="btn sm ghost" data-action="habit-edit" data-id="${h.id}">Edit</button><button class="btn sm danger" data-action="habit-archive" data-id="${h.id}">Archive</button></div>
+    </details>
+  </section>`;
+}
+
+function habitFormCard() {
+  const f = habitForm;
+  const v = f?.v || {};
+  const days = v.days || DH.ALL_DAYS;
+  const have = new Set(state.habits.filter((h) => !h.archived).map((h) => h.name.toLowerCase()));
+  const chips = DH.TEMPLATES.filter((tp) => !have.has(tp.name.toLowerCase())).map((tp) => `<button class="chip-btn" data-action="habit-template" data-key="${tp.key}">${esc(tp.name)}</button>`).join("");
+  if (!f) {
+    return `<section class="card" id="add">
+      <h2>Add a habit <span class="right">${state.habits.filter((h) => !h.archived).length}/${DH.MAX_HABITS}</span></h2>
+      <p class="small muted" style="margin:0 0 10px">Start from one of these or write your own. You'll get an email with the plan to make it stick.</p>
+      <div class="suggest">${chips}<button class="chip-btn" data-action="habit-template" data-key="">+ Something else</button></div>
+    </section>`;
+  }
+  const field = (k, label, ph, hint = "") =>
+    `<div class="field"><label for="hf-${k}">${label}</label><input id="hf-${k}" data-hf="${k}" maxlength="120" value="${esc(v[k] || "")}" placeholder="${esc(ph)}"/>${hint ? `<span class="hint">${hint}</span>` : ""}</div>`;
+  return `<section class="card" id="add">
+    <h2>${f.id ? "Edit habit" : "New habit"} <span class="right">Atomic Habits, all four laws</span></h2>
+    ${field("name", "Habit", "Read Atomic Habits")}
+    <div class="grid2">
+      ${field("amount", "How much (a normal day)", "10 pages")}
+      ${field("twoMin", "Two-minute version (a bad day)", "Read one page", "Small enough that you can't say no. It still counts.")}
+    </div>
+    <div class="grid2">
+      ${field("time", "When", "9:30 pm")}
+      ${field("place", "Where", "my desk")}
+    </div>
+    ${field("after", "Habit stack: right after I…", "brush my teeth", "Anchor it to something you already do every day.")}
+    ${field("identity", "Every rep is a vote for…", "I am a reader.")}
+    <div class="sub-h" style="margin-top:14px">Days</div>
+    <div class="days">${DH.DOW.map((d, i) => `<label class="day"><input type="checkbox" data-hf-day="${i}" ${days.includes(i) ? "checked" : ""}/><span>${d}</span></label>`).join("")}</div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn primary" data-action="habit-save">${f.id ? "Save changes" : "Create habit"}</button>
+      <button class="btn ghost" data-action="habit-cancel">Cancel</button>
+    </div>
+  </section>`;
+}
+
+function viewHabits() {
+  const t = today();
+  const H = D.dayFacts(state, t).habits;
+  const archived = state.habits.filter((h) => h.archived);
+  const pct = H.weekScheduled ? Math.round((H.weekDone / H.weekScheduled) * 100) : 0;
+  const week = H.list.length
+    ? `<section class="card">
+        <h2>This week <span class="right">week of ${fmtDate(DH.weekStart(t), { month: "short", day: "numeric" })}</span></h2>
+        <div class="pbar"><div class="pbar-top"><span><b>${H.weekDone}</b> of ${H.weekScheduled} reps</span><span>${pct}%</span></div>
+          <div class="track"><div class="fill-grad" style="width:${pct}%"></div></div></div>
+        <p class="small muted" style="margin:10px 0 0">Today: ${H.due.length ? `${H.done.length} of ${H.due.length} done.` : "nothing scheduled."} Every completion is emailed to you, and every Monday you get last week's scorecard.</p>
+      </section>`
+    : `<section class="card"><h2>Your daily habits</h2>
+        <p style="margin:0 0 8px">Put in the habits you want to keep up with. The app turns each one into a system:</p>
+        <ul class="ticks good"><li>A time and place, so you never decide "when" (Law 1)</li><li>An identity it votes for (Law 2)</li><li>A two-minute version for bad days that still counts (Law 3)</li><li>One tap to tick it, a chain, and an email every time you do it (Law 4)</li></ul>
+      </section>`;
+  const last = H.lastWeek.length
+    ? `<section class="card"><h2>Last week <span class="right">fix the weakest first</span></h2>
+        ${H.lastWeek
+          .map((x) => `<div class="pbar"><div class="pbar-top"><span>${esc(x.h.name)}</span><span>${x.week.done}/${x.week.scheduled}</span></div>
+            <div class="track"><div class="${x.week.pct >= 80 ? "fill-grad" : "fill-bad"}" style="width:${Math.max(2, x.week.pct)}%"></div></div></div>`)
+          .join("")}
+        <p class="small muted" style="margin:10px 0 0">Under 80%? The cue is usually the problem: change its time or place (Edit), or shrink it.</p></section>`
+    : "";
+  const cards = H.list.map((x) => habitCard(x, t)).join("");
+  const arch = archived.length
+    ? `<details class="card"><summary class="small"><b>Archived</b> · ${archived.length}</summary><div class="lessons" style="margin-top:10px">${archived
+        .map((h) => `<div class="partner"><div><b>${esc(h.name)}</b><div class="small faint">archived ${fmtDate(h.archived, { month: "short", day: "numeric" })}</div></div><button class="btn sm ghost" data-action="habit-restore" data-id="${h.id}">Restore</button></div>`)
+        .join("")}</div></details>`
+    : "";
+  return `<div class="view">${week}${habitForm ? habitFormCard() : ""}${cards}${last}${habitForm ? "" : habitFormCard()}${arch}</div>`;
+}
+
+function readHabitForm() {
+  const v = {};
+  document.querySelectorAll("[data-hf]").forEach((el) => (v[el.dataset.hf] = el.value));
+  v.days = [...document.querySelectorAll("[data-hf-day]")].filter((el) => el.checked).map((el) => Number(el.dataset.hfDay));
+  return v;
+}
+
+function saveHabit() {
+  const v = readHabitForm();
+  if (habitForm?.id) {
+    const i = state.habits.findIndex((h) => h.id === habitForm.id);
+    if (i < 0) return;
+    const r = DH.editHabit(state.habits[i], v);
+    if (r.error) return toast(r.error);
+    state.habits[i] = r.habit;
+    habitForm = null;
+    save();
+    toast("Saved.");
+    return render();
+  }
+  if (state.habits.filter((h) => !h.archived).length >= DH.MAX_HABITS) return toast(`${DH.MAX_HABITS} habits is the limit. Fewer, done daily, beats many done sometimes.`);
+  const now = Date.now();
+  let id = `h${now.toString(36)}`;
+  while (state.habits.some((h) => h.id === id)) id += "x";
+  const r = DH.makeHabit(v, { today: today(), now, id });
+  if (r.error) return toast(r.error);
+  state.habits.push(r.habit);
+  habitForm = null;
+  notifyPending = true;
+  save();
+  FX.fanfare();
+  bigCelebration(0.5);
+  toast(Sync.status.email ? `Habit created. Your plan for it is on its way to your inbox.` : "Habit created. Sign in under More to get its plan (and every completion) by email.");
+  render();
+}
+
+// Tick a habit for day k (default today). Same mode again = undo.
+function doHabit(id, mode, k = today(), el = null) {
+  const h = state.habits.find((x) => x.id === id);
+  if (!h || !DH.isLive(h, k)) return;
+  const day = { ...(state.habitLog[k] || {}) };
+  const undo = day[id] === mode;
+  if (undo) delete day[id];
+  else day[id] = mode;
+  if (Object.keys(day).length) state.habitLog[k] = day;
+  else delete state.habitLog[k];
+  if (!undo && k === today()) notifyPending = true;
+  save();
+  if (undo) {
+    toast("Undone.");
+    return render();
+  }
+  const H = D.dayFacts(state, today()).habits;
+  const x = H.list.find((y) => y.h.id === id);
+  FX.chime(H.done.length - 1);
+  const r = el?.getBoundingClientRect();
+  if (r) burst(r.left + r.width / 2, r.top + r.height / 2, 24);
+  if (k !== today()) toast(`Logged for ${fmtDate(k)}.`);
+  else if (H.allDone && H.due.length > 1) {
+    setTimeout(() => (bigCelebration(0.6), FX.fanfare()), 150);
+    toast(`All ${H.due.length} habits done today. That's who you are now.`);
+  } else if (mode === "min") toast(`Two-minute version counts. Chain kept at ${x?.streak || 1}. Showing up on bad days is the habit.`);
+  else toast(`✓ ${h.name}. ${x && x.streak > 1 ? `${x.streak} days in a row.` : "Day one of the chain."}${h.identity ? ` A vote for "${h.identity}"` : ""}`);
+  render();
+}
+
 // ---------- settings
 
 function viewSettings() {
   const s = state.settings;
   const conflict = H.rewardConflict(s.bundle);
+  const link = (href, icon, title, sub) => `<a class="more-link" href="${href}"><span class="ml-i">${icon}</span><span><b>${title}</b><span class="small muted">${sub}</span></span><span class="ml-go">→</span></a>`;
   return `<div class="view">
-    <section class="card">
+    <section class="card more-links">
+      ${link("#system", "⚡", "How the system works", "Atomic Habits, today's idea, the olympiad roadmap")}
+      ${link("#system/contract", "✍️", "Habit contract", state.contract.signedAt ? "In force. Penalties and partners" : "Not signed. Make skipping cost something")}
+      ${link("#settings/sync", "📬", "Sign-in and emails", Sync.status.email ? `Signed in as ${esc(Sync.status.email)}` : "Sign in to sync and get every email")}
+      ${link("#settings/plan", "⏱", "Study plan settings", "Minutes per day, deadline, rewards")}
+    </section>
+    <section class="card" id="plan">
       <h2>Honest capacity <span class="right">drives the plan</span></h2>
       <div class="grid2">
         <div class="field"><label for="weekdayMin">Minutes on school days</label><input id="weekdayMin" data-setting="weekdayMin" type="number" min="0" max="900" step="5" value="${s.weekdayMin}"/></div>
@@ -1093,16 +1319,18 @@ function syncCard() {
   } else {
     const when = st.lastSync ? st.lastSync.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "not yet";
     body = `<p class="small" style="margin:0 0 12px"><span class="dot ${st.error ? "bad" : "good"}"></span> Synced as <b>${esc(st.email)}</b> · last sync ${when}</p>
-      <p class="small muted" style="margin:0 0 12px">📬 Daily emails go to this address: a morning plan, a check-in the moment you hit halfway, and an evening wrap. They only know what has synced, so tick lessons while signed in.</p>
+      <p class="small muted" style="margin:0 0 12px">📬 Emails go to this address: a morning plan, a midday check-in, an evening wrap, one for every lesson and habit you finish, one for every habit you create, and a weekly scorecard on Mondays. They only know what has synced, so tick things while signed in.</p>
       <div class="btn-row"><button class="btn ghost" data-action="syncnow">Sync now</button><button class="btn ghost" data-action="signout">Sign out</button></div>`;
   }
-  return `<section class="card"><h2>Sync across devices <span class="right">${st.enabled ? "Supabase" : "off"}</span></h2>
+  return `<section class="card" id="sync"><h2>Sign-in, sync and emails <span class="right">${st.enabled ? "Supabase" : "off"}</span></h2>
     ${st.error ? `<div class="banner bad" style="margin-bottom:12px"><span class="bi">⚠️</span><div>${esc(st.error)}</div></div>` : ""}${body}</section>`;
 }
 
 // ---------- render loop
 
-const VIEWS = { today: viewToday, tracker: viewTracker, courses: viewCourses, system: viewSystem, settings: viewSettings };
+const VIEWS = { today: viewToday, habits: viewHabits, courses: viewCourses, tracker: viewTracker, settings: viewSettings, system: viewSystem };
+// Tabs in the bar. "system" (the why) lives under More.
+const TAB_OF = { system: "settings" };
 let lastRingPct = 0;
 let renderedDay = today();
 
@@ -1131,7 +1359,7 @@ function render() {
   pill.classList.toggle("lit", active.has(t));
 
   const tab = currentTab();
-  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === (TAB_OF[tab] || tab))));
   $("#app").innerHTML = VIEWS[tab]();
   if (tab === "today") refreshCalendar();
 
@@ -1224,6 +1452,7 @@ function toggle(id, el) {
       state.session = null;
     }
     justDone = id;
+    notifyPending = true;
   }
   save();
 
@@ -1332,8 +1561,44 @@ document.addEventListener("click", (e) => {
   const act = a.dataset.action;
   const t = today();
   if (act === "toggle") toggle(a.dataset.id, a);
-  else if (act === "mode") {
+  else if (act === "habit-do") doHabit(a.dataset.id, a.dataset.mode, today(), a);
+  else if (act === "habit-day") {
+    const st = state.habitLog[a.dataset.day]?.[a.dataset.id];
+    doHabit(a.dataset.id, st || "full", a.dataset.day, a);
+  } else if (act === "habit-template") {
+    const tp = DH.TEMPLATES.find((x) => x.key === a.dataset.key);
+    habitForm = { v: tp ? { ...tp } : {} };
+    render();
+    document.getElementById("add")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#hf-name")?.focus({ preventScroll: true });
+  } else if (act === "habit-save") saveHabit();
+  else if (act === "habit-cancel") {
+    habitForm = null;
+    render();
+  } else if (act === "habit-edit") {
+    const h = state.habits.find((x) => x.id === a.dataset.id);
+    if (!h) return;
+    habitForm = { id: h.id, v: { ...h } };
+    render();
+    document.getElementById("add")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else if (act === "habit-archive") {
+    const h = state.habits.find((x) => x.id === a.dataset.id);
+    if (h && confirm(`Archive "${h.name}"? Its history stays; it just stops being scheduled. You can restore it.`)) {
+      h.archived = t;
+      save();
+      toast("Archived. Fewer habits, done daily, beats many done sometimes.");
+      render();
+    }
+  } else if (act === "habit-restore") {
+    const h = state.habits.find((x) => x.id === a.dataset.id);
+    if (!h) return;
+    h.archived = null;
+    save();
+    toast("Restored.");
+    render();
+  } else if (act === "mode") {
     setDayLog({ mode: a.dataset.mode });
+    notifyPending = true;
     save();
     toast(a.dataset.mode === "min" ? `Bad day accepted. ${state.settings.minimum}` : "Full plan. Let's go.");
     render();
@@ -1509,6 +1774,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.id === "noteText") $('[data-action="note"]')?.click();
   if (e.key === "Enter" && e.target.id === "syncCode") $('[data-action="verify-code"]')?.click();
   if (e.key === "Enter" && e.target.id === "syncEmail") $('[data-action="signin"]')?.click();
+  if (e.key === "Enter" && e.target.dataset?.hf) $('[data-action="habit-save"]')?.click();
 });
 
 // The discounting slider updates in place, no re-render.
@@ -1738,29 +2004,29 @@ Sync.initSync({
     lastSyncEmail = st.email;
     if (currentTab() === "settings" || (signedInChanged && currentTab() === "today")) render();
   },
-  onPushed: maybeNudge,
+  onPushed: notifyServer,
 });
 
-// The midday email goes out the moment you're halfway, not at a fixed hour.
-// After every synced change, if today just crossed halfway, ask the server.
-// It re-checks from the database and sends at most once a day.
-const NUDGE_KEY = "goals.nudged";
-let nudging = false;
-function maybeNudge() {
-  const F = facts();
-  if (nudging || !D.reachedHalfway(F) || params.get("today")) return;
-  try {
-    if (localStorage.getItem(NUDGE_KEY) === F.t) return;
-  } catch {}
-  nudging = true;
-  Sync.nudge()
+// Every tick, habit and new habit gets an email. After the sync that carries
+// it, ask the server to send whatever is new. It re-checks from the database
+// and sends each thing exactly once; the hourly cron catches anything this
+// misses (offline, closed tab), so a failed call is retried, never lost.
+let notifying = false;
+function notifyServer() {
+  if (!notifyPending || notifying || params.get("today")) return;
+  notifying = true;
+  notifyPending = false;
+  let failed = false;
+  Sync.notify()
     .then((r) => {
-      if (r?.sent || r?.reason === "already sent today") {
-        try {
-          localStorage.setItem(NUDGE_KEY, F.t);
-        } catch {}
-      }
-      if (r?.sent) toast("📬 Halfway check-in sent to your inbox.");
+      if (!r) return void (failed = true);
+      const slots = (r.sent || []).flatMap((x) => [].concat(x.slot));
+      if (slots.some((x) => String(x).startsWith("new:"))) toast("📬 Your habit plan is in your inbox.");
+      else if (slots.includes("midday")) toast("📬 Check-in sent to your inbox.");
     })
-    .finally(() => (nudging = false));
+    .finally(() => {
+      notifying = false;
+      if (failed) notifyPending = true; // retried after the next sync (or by the hourly cron)
+      else if (notifyPending) notifyServer(); // something new happened while this call was out
+    });
 }
