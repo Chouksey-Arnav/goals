@@ -8,7 +8,9 @@
 //
 // Manual use (needs the secret, as a header or ?key=):
 //   /api/cron?slot=morning&dry=1&key=SECRET    preview the email in the browser
-//                                              (also slot=partner, weekly, done, new)
+//                                              (also slot=review, partner, weekly, done, new)
+//   /api/cron?slot=review&dry=1&format=json&key=SECRET   the review's facts,
+//                                              grade, and which Groq lines were dropped
 //   /api/cron?slot=evening&force=1&key=SECRET  send it now, ignoring "already sent"
 //   /api/cron?status=1&key=SECRET              what's been sent today, and config check
 
@@ -20,7 +22,7 @@ import { BY_ID } from "../js/digest.js";
 import { completionEvents, newHabitEvents, isEventSlot, dowOf } from "../js/dailyhabits.js";
 import { composeDone, composeHabitNew } from "../js/emails.js";
 
-const SLOTS = ["morning", "midday", "evening", "partner", "weekly"];
+const SLOTS = ["morning", "midday", "evening", "review", "partner", "weekly"];
 // Preview only (?dry=1): today's completion email and the newest habit's plan.
 const PREVIEWS = ["done", "new"];
 
@@ -87,6 +89,7 @@ export default async function handler(req, res) {
           pending: [...newHabitEvents(ctx.state, ctx.day), ...completionEvents(ctx.state, ctx.day, BY_ID)].filter((e) => !sent[e.slot]).map((e) => e.slot),
         } : null,
         syncedAt: ctx.syncedAt || null,
+        review: { groq: cfg.groqKey ? cfg.groqModel : "not configured (GROQ_API_KEY): written from your record by rules", calendar: cfg.calendarSecret ? "configured" : "not configured (CALENDAR_SECRET): no to-dos in the review" },
       });
     }
 
@@ -94,6 +97,10 @@ export default async function handler(req, res) {
       const slot = slotParam || "morning";
       if (ctx.problem) return json(res, 200, { slot, problem: ctx.problem, note: "No synced progress to build from yet." });
       await withAgenda(cfg, ctx, slot);
+      if (slot === "review" && q.get("format") === "json") {
+        const r = ctx.review || {};
+        return json(res, 200, { grade: r.grade, source: r.source, model: r.model, error: r.error || null, dropped: r.dropped || [], facts: r.facts, subject: r.mail?.subject || null });
+      }
       const mail = preview(cfg, slot, ctx);
       if (!mail) return json(res, 200, { slot, note: "Nothing to show: this email would not be sent today (rest day, finished, nothing completed yet, or no habits)." });
       res.statusCode = 200;
