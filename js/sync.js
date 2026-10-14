@@ -7,6 +7,11 @@
 
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
+// API calls are relative ("api/notify", not "/api/notify"): on the site,
+// Goals is at /goals/, so they must go to /goals/api/..., not the calendar's
+// /api/. The page is always loaded at a URL ending in "/" (the site
+// redirects /goals to /goals/).
+
 const SDK = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/+esm";
 
 let client = null;
@@ -56,7 +61,7 @@ export async function initSync(h) {
 export async function signIn(email) {
   if (!client) return { error: "Sync is not set up." };
   try {
-    const res = await fetch("/api/login-code", {
+    const res = await fetch("api/login-code", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
@@ -89,7 +94,7 @@ export async function notify() {
     const { data } = await client.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return null;
-    const res = await fetch("/api/notify", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch("api/notify", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
     const body = await res.json().catch(() => null);
     return res.ok ? body : null;
   } catch {
@@ -174,7 +179,7 @@ export async function boost() {
     const { data } = await client.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return { error: "Session expired. Sign in again in Settings." };
-    const res = await fetch("/api/boost", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch("api/boost", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
     const body = await res.json().catch(() => ({}));
     return res.ok ? body : { error: body.error || `Error ${res.status}` };
   } catch {

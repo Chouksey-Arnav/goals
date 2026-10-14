@@ -8,7 +8,8 @@ import { dayFacts, zonedParts, reachedHalfway, BY_ID } from "../../js/digest.js"
 import { normalize } from "../../js/state.js";
 import { compose, composePartner, composeDone, composeHabitNew, composeWeekly } from "../../js/emails.js";
 import { completionEvents, newHabitEvents, isEventSlot } from "../../js/dailyhabits.js";
-import { nudgeAllowed } from "../../js/schedule.js";
+import { nudgeAllowed, isSchoolDay, workday, clockLabel } from "../../js/schedule.js";
+import { workFacts, halftimeScore, halftimeWorth } from "../../js/worktime.js";
 import { diffDays, addDays } from "../../js/planner.js";
 import { TRACK_START } from "../../js/data.js";
 import { reviewFacts, gradeDay, buildReviewMessages, checkReview, fallbackReview, composeReview, REVIEW_SCHEMA } from "../../js/review.js";
@@ -22,15 +23,18 @@ export function nowIn(cfg, at = new Date()) {
 
 // Everything needed to write today's emails, or a clear reason why not.
 export async function loadDay(cfg, at = new Date(), userId = null) {
-  const { day, hour } = nowIn(cfg, at);
+  const { day, hour, min } = nowIn(cfg, at);
+  // The schedule's clock: minutes since local midnight, and whether today
+  // is a school day (work starts after school).
+  const clock = { min, school: isSchoolDay(day) };
   let uid = userId;
   if (!uid) {
     const user = await DB.findUserByEmail(cfg, cfg.to);
-    if (!user) return { day, hour, problem: "no-user" };
+    if (!user) return { day, hour, clock, problem: "no-user" };
     uid = user.id;
   }
   const row = await DB.loadProgress(cfg, uid);
-  if (!row?.state) return { day, hour, problem: "no-progress" };
+  if (!row?.state) return { day, hour, clock, problem: "no-progress" };
   const state = normalize(row.state);
   const keyOf = (ms) => zonedParts(new Date(ms), cfg.tz).day;
   const F = dayFacts(state, day, keyOf);
@@ -40,7 +44,7 @@ export async function loadDay(cfg, at = new Date(), userId = null) {
   });
   // Yesterday's facts, for the partner report.
   const Fy = dayFacts(state, addDays(day, -1), keyOf);
-  return { day, hour, state, F, Fy, syncedAt, userId: uid };
+  return { day, hour, clock, state, F, Fy, syncedAt, userId: uid };
 }
 
 export function firstName(state, cfg) {
@@ -60,6 +64,10 @@ export function mailCtx(cfg, ctx) {
     middayHour: cfg.middayHour,
     // Today's calendar (calendar app), loaded by withAgenda for the morning email.
     agenda: ctx.agenda || null,
+    workStart: clockLabel(workday(cfg, ctx.clock?.school ?? true).start),
+    // The halftime email's numbers (withAgenda).
+    work: ctx.work || null,
+    halftime: ctx.halftime || null,
   };
 }
 
@@ -75,7 +83,11 @@ export function buildEmail(cfg, slot, ctx, extra = {}) {
 // only for those slots. The review is written here (it needs Groq, which is
 // async) and buildEmail just picks it up.
 export async function withAgenda(cfg, ctx, slot, io = {}) {
-  if ((slot === "morning" || slot === "review") && !ctx.problem && ctx.agenda === undefined) ctx.agenda = await fetchAgenda(cfg, ctx.day);
+  if (["morning", "halftime", "review"].includes(slot) && !ctx.problem && ctx.agenda === undefined) ctx.agenda = await (io.agenda || fetchAgenda)(cfg, ctx.day);
+  if (slot === "halftime" && !ctx.problem && ctx.halftime === undefined) {
+    ctx.work = workFacts(ctx.F, ctx.agenda, cfg, { day: ctx.day, now: ctx.clock.min });
+    ctx.halftime = halftimeScore(ctx.F, ctx.agenda);
+  }
   if (slot === "review" && !ctx.problem && ctx.review === undefined) ctx.review = await writeReview(cfg, ctx, io);
   return ctx;
 }
@@ -88,16 +100,17 @@ const WEEKDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday
 // io: { ask, agenda } swap Groq and the calendar for tests.
 export async function writeReview(cfg, ctx, { ask = askGroq, agenda = fetchAgenda } = {}) {
   const tomorrowAgenda = await agenda(cfg, addDays(ctx.day, 1)).catch(() => null);
-  const { facts, tomorrow } = reviewFacts(ctx.F, ctx.state, { agenda: ctx.agenda || null, tomorrowAgenda, syncedAt: ctx.syncedAt });
+  const { facts, tomorrow } = reviewFacts(ctx.F, ctx.state, { agenda: ctx.agenda || null, tomorrowAgenda, syncedAt: ctx.syncedAt, cfg });
   const grade = gradeDay(facts);
   if (!grade) return { mail: null, facts, grade: null };
+  const workStart = clockLabel(workday(cfg, isSchoolDay(addDays(ctx.day, 1))).start);
   let review = null;
   let error = null;
   let model = null;
   if (cfg.groqKey) {
     try {
       const weekday = WEEKDAY[new Date(`${ctx.day}T12:00:00Z`).getUTCDay()];
-      const r = await ask(cfg, buildReviewMessages({ day: ctx.day, weekday, grade, facts, tomorrow, name: firstName(ctx.state, cfg) }), REVIEW_SCHEMA);
+      const r = await ask(cfg, buildReviewMessages({ day: ctx.day, weekday, grade, facts, tomorrow, name: firstName(ctx.state, cfg), workStart }), REVIEW_SCHEMA);
       model = r.model;
       review = checkReview(r.json, { facts, grade, tomorrow });
       if (!review) error = "Groq's answer didn't survive the checks (no usable verdict).";
@@ -106,7 +119,7 @@ export async function writeReview(cfg, ctx, { ask = askGroq, agenda = fetchAgend
       console.error("Review: Groq failed, writing it from the record:", e.message);
     }
   }
-  if (!review) review = fallbackReview({ facts, grade });
+  if (!review) review = fallbackReview({ facts, grade, workStart });
   const mail = composeReview(review, grade, { day: ctx.day, appUrl: cfg.appUrl, calendarUrl: ctx.agenda?.appUrl || cfg.calendarUrl });
   return { mail, grade, facts, source: review.source, model, dropped: review.dropped, error };
 }
@@ -139,6 +152,9 @@ export function addressing(cfg, slot) {
 export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
   const addr = addressing(cfg, slot);
   if (!addr) return { slot, sent: false, reason: "PARTNER_EMAILS is empty" };
+  // Checked before fetching anything: the minute clock asks every minute.
+  if (slot === "halftime" && !ctx.problem && !halftimeWorth(ctx.F)) return { slot, sent: false, reason: "everything is already done" };
+  if (slot === "halftime" && ctx.problem) return { slot, sent: false, reason: ctx.problem };
   await withAgenda(cfg, ctx, slot);
   const mail = ctx.problem ? (slot === "morning" ? setupEmail(cfg, ctx.problem) : null) : buildEmail(cfg, slot, ctx);
   if (!mail) return { slot, sent: false, reason: ctx.problem || "nothing worth sending (rest day, before tracking, or finished)" };
@@ -204,7 +220,7 @@ export async function sendEvents(cfg, ctx, { midday = true, io = { db: DB, send:
   const pending = completionEvents(ctx.state, ctx.day, BY_ID)
     .filter((e) => !sent[e.slot])
     .slice(0, MAX_EVENT_ROWS - used);
-  const middayNow = midday && reachedHalfway(ctx.F) && nudgeAllowed(ctx.hour, sent, cfg);
+  const middayNow = midday && reachedHalfway(ctx.F) && nudgeAllowed(ctx.clock, sent, cfg);
   if (!pending.length && !middayNow) return results;
   // Claim first: whoever inserts the row sends. A racing run skips what it lost.
   const mine = [];

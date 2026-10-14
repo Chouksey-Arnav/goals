@@ -3,13 +3,24 @@
 // Where today's study plan stands, as JSON, for the calendar app
 // (calendarforarnav) to show next to your schedule. Same account, same
 // Supabase project, so the calendar's session token works here. Read-only.
-// CORS allows exactly the calendar's address (CALENDAR_URL).
+// Same origin as the calendar on the site; CORS allows CALENDAR_URL's origin otherwise.
 
 import { config, missing, loadDay, json } from "./_lib/run.js";
 import { userFromToken } from "./_lib/supabase.js";
 
-function cors(req, res, origin) {
-  if (req.headers.origin === origin) {
+const originOf = (url) => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+};
+
+// On the site both apps share one origin and this never triggers; it's for
+// a CALENDAR_URL on another address.
+function cors(req, res, url) {
+  const origin = originOf(url);
+  if (origin && req.headers.origin === origin) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");

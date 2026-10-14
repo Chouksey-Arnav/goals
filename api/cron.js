@@ -1,10 +1,12 @@
 // GET /api/cron
 //
-// Called by Vercel Cron every hour (see vercel.json). Sends whichever of the
-// three daily emails is due in your time zone, at most once each per day
-// (plus the partner report, and the weekly kickoff on Mondays). Every run
-// also catches up on completion and new-habit emails the app's own
-// /api/notify call missed (see sendEvents in api/_lib/run.js).
+// Called every minute by Supabase pg_cron (?src=db, with the calendar's
+// shared secret; see supabase/migrations/20261015000100_goals_tick.sql) and
+// every hour by Vercel Cron as the backup (vercel.json). Sends whichever
+// daily email is due in your time zone, at most once each per day (plus the
+// partner report, and the weekly kickoff on Mondays). Every run also catches
+// up on completion and new-habit emails the app's own /api/notify call
+// missed (see sendEvents in api/_lib/run.js).
 //
 // Manual use (needs the secret, as a header or ?key=):
 //   /api/cron?slot=morning&dry=1&key=SECRET    preview the email in the browser
@@ -17,17 +19,18 @@
 import { timingSafeEqual } from "node:crypto";
 import { config, missing, loadDay, sendSlot, sendEvents, buildEmail, mailCtx, withAgenda, json, nowIn, isAlertHour, sendAlert } from "./_lib/run.js";
 import { slotsSent } from "./_lib/supabase.js";
-import { dueSlots, windows } from "../js/schedule.js";
+import { providers } from "./_lib/mailer.js";
+import { dueSlots, windows, clockLabel, DAY_MIN } from "../js/schedule.js";
 import { BY_ID } from "../js/digest.js";
 import { completionEvents, newHabitEvents, isEventSlot, dowOf } from "../js/dailyhabits.js";
 import { composeDone, composeHabitNew } from "../js/emails.js";
 
-const SLOTS = ["morning", "midday", "evening", "review", "partner", "weekly"];
+const SLOTS = ["morning", "midday", "halftime", "evening", "review", "partner", "weekly"];
 // Preview only (?dry=1): today's completion email and the newest habit's plan.
 const PREVIEWS = ["done", "new"];
 
 // Slots due this run, given what's been sent today.
-const due = (cfg, ctx, sent) => dueSlots(ctx.hour, sent, cfg, { partners: cfg.partners.length > 0, weekStart: dowOf(ctx.day) === 0 });
+const due = (cfg, ctx, sent) => dueSlots(ctx.clock, sent, cfg, { partners: cfg.partners.length > 0, weekStart: dowOf(ctx.day) === 0 });
 
 function preview(cfg, slot, ctx) {
   if (slot === "done") return composeDone(ctx.F, completionEvents(ctx.state, ctx.day, BY_ID).slice(-1), mailCtx(cfg, ctx));
@@ -38,33 +41,46 @@ function preview(cfg, slot, ctx) {
   return buildEmail(cfg, slot, ctx);
 }
 
-function authorized(req, secret) {
-  if (!secret) return false;
-  const url = new URL(req.url, "http://x");
-  const given = (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || url.searchParams.get("key") || "";
-  const a = Buffer.from(given);
-  const b = Buffer.from(secret);
-  return a.length === b.length && timingSafeEqual(a, b);
+const given = (req) => (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || new URL(req.url, "http://x").searchParams.get("key") || "";
+function same(a, b) {
+  if (!a || !b) return false;
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+// CRON_SECRET can do everything. The calendar's secret (CALENDAR_SECRET,
+// which the database already holds for its own minute job) may only trigger
+// a plain scheduled run: no previews, no force, no status.
+export function authorized(req, cfg) {
+  const key = given(req);
+  if (same(key, cfg.cronSecret)) return true;
+  const q = new URL(req.url, "http://x").searchParams;
+  const plain = q.get("src") === "db" && !["slot", "status", "dry", "force", "format"].some((k) => q.has(k));
+  return plain && same(key, cfg.calendarSecret);
 }
 
 export default async function handler(req, res) {
   const cfg = config();
   const gaps = missing(cfg, ["mail", "db", "cron"]);
   if (!cfg.cronSecret) return json(res, 500, { error: "CRON_SECRET is not set.", missing: gaps });
-  if (!authorized(req, cfg.cronSecret)) return json(res, 401, { error: "Unauthorized." });
+  if (!authorized(req, cfg)) return json(res, 401, { error: "Unauthorized." });
   const q = new URL(req.url, "http://x").searchParams;
   // Only the scheduled runs alert; a manual ?slot= or ?status= call shows the error itself.
   const scheduled = !q.get("slot") && !q.get("status") && !q.get("dry");
+  // ...and only the hourly Vercel runs: the minute clock would send an alert
+  // every minute of an outage. The hourly run reports the same failure.
+  const alerting = scheduled && q.get("src") !== "db";
   const alert = async (errors) => {
     try {
       const { day, hour } = nowIn(cfg);
-      if (scheduled && isAlertHour(cfg, hour)) await sendAlert(cfg, { day, hour, errors });
+      if (alerting && isAlertHour(cfg, hour)) await sendAlert(cfg, { day, hour, errors });
     } catch (e) {
       console.error("Alert skipped:", e.message);
     }
   };
   if (gaps.length) {
-    if (cfg.gmailUser && cfg.gmailPass) await alert([`Missing or invalid configuration: ${gaps.join(", ")}`]);
+    if (providers(cfg).length) await alert([`Missing or invalid configuration: ${gaps.join(", ")}`]);
     return json(res, 500, { error: "Missing configuration.", missing: gaps });
   }
 
@@ -79,8 +95,9 @@ export default async function handler(req, res) {
     if (q.get("status")) {
       const sent = await slotsSent(cfg, cfg.to, ctx.day);
       return json(res, 200, {
-        to: cfg.to, from: cfg.gmailUser, copies: cfg.cc.length, partners: cfg.partners.length, warnings: cfg.warnings,
-        timeZone: cfg.tz, localDay: ctx.day, localHour: ctx.hour, windows: windows(cfg), sentToday: sent,
+        to: cfg.to, from: providers(cfg).map((p) => `${p.name} <${p.from}>`), copies: cfg.cc.length, partners: cfg.partners.length, warnings: cfg.warnings,
+        timeZone: cfg.tz, localDay: ctx.day, localTime: clockLabel(ctx.clock.min), schoolDay: ctx.clock.school,
+        windows: Object.fromEntries(Object.entries(windows(cfg, ctx.clock)).map(([k, [a, b]]) => [k, a < b ? `${clockLabel(a)} – ${clockLabel(b % DAY_MIN)}` : "off"])), sentToday: sent,
         due: due(cfg, ctx, sent), problem: ctx.problem || null,
         today: ctx.F ? { lessons: ctx.F.planLessons.length, done: ctx.F.planDone.length, pct: ctx.F.pct, streak: ctx.F.streak } : null,
         habits: ctx.F ? { live: ctx.F.habits.list.length, dueToday: ctx.F.habits.due.length, doneToday: ctx.F.habits.done.length } : null,
@@ -131,9 +148,9 @@ export default async function handler(req, res) {
       } catch (e) {
         results.push({ slot: "events", sent: false, error: String(e.message || e) });
       }
-      if (!results.length) return json(res, 200, { sent: false, reason: "nothing due this hour", localHour: ctx.hour, warnings: cfg.warnings });
+      if (!results.length) return json(res, 200, { sent: false, reason: "nothing due now", localTime: clockLabel(ctx.clock.min), warnings: cfg.warnings });
     }
-    console.log(JSON.stringify({ at: new Date().toISOString(), day: ctx.day, hour: ctx.hour, results }));
+    console.log(JSON.stringify({ at: new Date().toISOString(), day: ctx.day, time: clockLabel(ctx.clock.min), results }));
     const failed = results.some((r) => r.error);
     if (failed) await alert(results.filter((r) => r.error).map((r) => `${r.slot} email: ${r.error}`));
     return json(res, failed ? 502 : 200, slotParam ? results[0] : { results, warnings: cfg.warnings });

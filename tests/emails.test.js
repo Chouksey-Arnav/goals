@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { fresh } from "../js/state.js";
 import { dayFacts, reachedHalfway, zonedParts, LESSONS } from "../js/digest.js";
 import { compose, composePartner, composeBoost, boostPrinciple } from "../js/emails.js";
-import { dueSlots, nudgeAllowed, windows } from "../js/schedule.js";
-import { parseList, emailHours } from "../api/_lib/env.js";
+import { dueSlots, nudgeAllowed, windows, parseHM, clockLabel, isSchoolDay } from "../js/schedule.js";
+import { parseList, emailHours, workStarts } from "../api/_lib/env.js";
 import { isAuthError } from "../api/_lib/mailer.js";
 import { hint, isStale, STALE_MIN } from "../api/_lib/supabase.js";
 import { isAlertHour } from "../api/_lib/run.js";
@@ -29,42 +29,80 @@ function showUp(s, days) {
   return s;
 }
 
-const CFG = { morningHour: 7, middayHour: 14, eveningHour: 20 };
+const CFG = { morningHour: 7, middayHour: 14, eveningHour: 20, reviewHour: 22 };
 const none = {};
+// The schedule's clock: local time, and whether it's a school day.
+const at = (h, m = 0, school = true) => ({ min: h * 60 + m, school });
 
 test("zonedParts: same instant, different local day and hour", () => {
   const at = new Date("2026-10-15T02:30:00Z");
-  assert.deepEqual(zonedParts(at, "America/New_York"), { day: "2026-10-14", hour: 22 });
-  assert.deepEqual(zonedParts(at, "Asia/Kolkata"), { day: "2026-10-15", hour: 8 });
-  assert.deepEqual(zonedParts(new Date("2026-10-15T04:00:00Z"), "America/New_York"), { day: "2026-10-15", hour: 0 });
+  assert.deepEqual(zonedParts(at, "America/New_York"), { day: "2026-10-14", hour: 22, min: 22 * 60 + 30 });
+  assert.deepEqual(zonedParts(at, "Asia/Kolkata"), { day: "2026-10-15", hour: 8, min: 8 * 60 });
+  assert.deepEqual(zonedParts(new Date("2026-10-15T04:00:00Z"), "America/New_York"), { day: "2026-10-15", hour: 0, min: 0 });
 });
 
-test("dueSlots: one email per window, never twice", () => {
-  const due = (h, sent, opts) => dueSlots(h, sent, CFG, opts);
-  assert.deepEqual(due(6, none), []);
-  assert.deepEqual(due(7, none), ["morning"]);
-  assert.deepEqual(due(11, none), ["morning"], "a late cron still delivers the morning plan");
-  assert.deepEqual(due(12, none), [], "after noon a morning plan is stale");
-  assert.deepEqual(due(9, { morning: {} }), []);
-  assert.deepEqual(due(14, { morning: {} }), ["midday"]);
-  assert.deepEqual(due(15, { morning: {}, midday: {} }), [], "halfway nudge already sent it");
-  assert.deepEqual(due(20, { morning: {}, midday: {} }), ["evening"]);
-  assert.deepEqual(due(23, { morning: {}, midday: {}, evening: {} }), []);
+test("dueSlots, school day: work starts at 2:32 PM, halftime at 6:16 PM, one email per window", () => {
+  const due = (h, m, sent, opts) => dueSlots(at(h, m), sent, CFG, opts);
+  assert.deepEqual(due(6, 59, none), []);
+  assert.deepEqual(due(7, 0, none), ["morning"]);
+  assert.deepEqual(due(11, 59, none), ["morning"], "a late run still delivers the morning plan");
+  assert.deepEqual(due(12, 0, none), [], "after noon a morning plan is stale");
+  assert.deepEqual(due(9, 0, { morning: {} }), []);
+  assert.deepEqual(due(14, 31, { morning: {} }), [], "still at school");
+  assert.deepEqual(due(14, 32, { morning: {} }), ["midday"], "home: work starts now");
+  assert.deepEqual(due(15, 0, { morning: {}, midday: {} }), [], "halfway nudge already sent it");
+  assert.deepEqual(due(18, 15, { morning: {}, midday: {} }), []);
+  assert.deepEqual(due(18, 16, { morning: {}, midday: {} }), ["halftime"], "halfway between 2:32 PM and 10 PM");
+  assert.deepEqual(due(18, 16, { morning: {} }), ["halftime"], "a midday email that never went is superseded");
+  assert.deepEqual(due(20, 0, { morning: {}, midday: {}, halftime: {} }), ["evening"]);
+  assert.deepEqual(due(20, 0, { morning: {}, midday: {} }), ["evening"], "no stale halftime after 8 PM");
+  assert.deepEqual(due(22, 0, { morning: {}, midday: {}, halftime: {}, evening: {} }), ["review"]);
+  assert.deepEqual(due(23, 30, { morning: {}, midday: {}, halftime: {}, evening: {}, review: {} }), []);
   // The partner report rides the morning window, only when there are partners.
-  assert.deepEqual(due(7, none, { partners: true }), ["morning", "partner"]);
-  assert.deepEqual(due(8, { morning: {} }, { partners: true }), ["partner"], "a failed report retries next hour");
-  assert.deepEqual(due(14, { morning: {} }, { partners: true }), ["midday"], "no stale report after the morning");
+  assert.deepEqual(due(7, 0, none, { partners: true }), ["morning", "partner"]);
+  assert.deepEqual(due(8, 0, { morning: {} }, { partners: true }), ["partner"], "a failed report retries");
+  assert.deepEqual(due(14, 32, { morning: {} }, { partners: true }), ["midday"], "no stale report after the morning");
   // Morning window never overlaps midday, even with a late morning hour.
-  assert.deepEqual(windows({ morningHour: 12, middayHour: 14, eveningHour: 20 }).morning, [12, 14]);
+  assert.deepEqual(windows({ morningHour: 12, middayHour: 14, eveningHour: 20 }, { school: false }).morning, [720, 840]);
+});
+
+test("dueSlots, weekend: afternoon handoff at 2 PM, halftime at 3:30 PM", () => {
+  const due = (h, m, sent) => dueSlots(at(h, m, false), sent, CFG);
+  assert.deepEqual(due(14, 0, { morning: {} }), ["midday"]);
+  assert.deepEqual(due(15, 29, { morning: {}, midday: {} }), []);
+  assert.deepEqual(due(15, 30, { morning: {}, midday: {} }), ["halftime"], "halfway between 9 AM and 10 PM");
+  const w = windows(CFG, { school: false });
+  assert.deepEqual(w.midday, [840, 930]);
+  assert.deepEqual(w.halftime, [930, 1200]);
+});
+
+test("schedule helpers: times, labels, school days, custom work starts", () => {
+  assert.equal(parseHM("14:32"), 872);
+  assert.equal(parseHM("9:05"), 545);
+  assert.equal(parseHM("2:32pm"), null);
+  assert.equal(parseHM("25:00"), null);
+  assert.equal(clockLabel(872), "2:32 PM");
+  assert.equal(clockLabel(840), "2 PM");
+  assert.equal(clockLabel(0), "12 AM");
+  assert.equal(isSchoolDay("2026-10-14"), true, "Wednesday");
+  assert.equal(isSchoolDay("2026-10-17"), false, "Saturday");
+  assert.equal(isSchoolDay("2026-10-18"), false, "Sunday");
+  const w = [];
+  assert.deepEqual(workStarts({ WORKDAY_START: "15:10" }, w), { workdayStart: 910, weekendStart: 540 });
+  assert.equal(w.length, 0);
+  assert.deepEqual(workStarts({ WORKDAY_START: "3pm" }, w).workdayStart, 872);
+  assert.match(w[0], /not a time like 14:32/);
+  assert.deepEqual(workStarts({ WORKDAY_START: "19:50" }, w).workdayStart, 872, "no room for halftime before the evening wrap");
+  assert.match(w[1], /no room for the halftime/);
 });
 
 test("nudgeAllowed: after the morning email, before the evening one, once", () => {
-  assert.equal(nudgeAllowed(6, none, CFG), false, "too early");
-  assert.equal(nudgeAllowed(8, none, CFG), false, "morning email hasn't gone yet");
-  assert.equal(nudgeAllowed(8, { morning: {} }, CFG), true);
-  assert.equal(nudgeAllowed(13, none, CFG), true, "morning window passed without one (outage)");
-  assert.equal(nudgeAllowed(16, { morning: {}, midday: {} }, CFG), false);
-  assert.equal(nudgeAllowed(20, { morning: {} }, CFG), false, "evening window: the evening email covers it");
+  assert.equal(nudgeAllowed(at(6), none, CFG), false, "too early");
+  assert.equal(nudgeAllowed(at(8), none, CFG), false, "morning email hasn't gone yet");
+  assert.equal(nudgeAllowed(at(8), { morning: {} }, CFG), true, "a whole sitting done before school still gets its email");
+  assert.equal(nudgeAllowed(at(13), none, CFG), true, "morning window passed without one (outage)");
+  assert.equal(nudgeAllowed(at(16), { morning: {}, midday: {} }, CFG), false);
+  assert.equal(nudgeAllowed(at(20), { morning: {} }, CFG), false, "evening window: the evening email covers it");
 });
 
 const SAT = "2026-10-17";
@@ -170,7 +208,9 @@ test("morning with an unpaid contract breach leads with it", () => {
 test("midday, weekday: one sitting, not started / mid-sitting / complete", () => {
   const n = dayFacts(fresh(), T).planLessons.length;
   const zero = check(compose("midday", dayFacts(fresh(), T), ctx(fresh())));
-  assert.match(zero.subject, /^Today: \d+ lessons, ~.*, one sitting\. Prime it now\./);
+  assert.match(zero.subject, /^Work starts now: \d+ lessons, ~.*, one sitting\./);
+  assert.match(zero.text, /It's 2:32 PM\. School's done/);
+  assert.match(zero.text, /Phone in another room/);
   const half = withDone(Math.ceil(n / 2));
   const h = check(compose("midday", dayFacts(half, T), ctx(half)));
   assert.match(h.subject, new RegExp(`^${Math.ceil(n / 2)} of ${n} done\\. Same sitting: ${n - Math.ceil(n / 2)} to go`));
@@ -357,7 +397,10 @@ test("emailHours: out-of-order or invalid hours fall back loudly, never to an em
   assert.deepEqual(emailHours({ EMAIL_EVENING_HOUR: "8pm" }, w).eveningHour, 20);
   assert.match(w[1], /"8pm" is not a whole hour/);
   for (const env of [{}, { EMAIL_MORNING_HOUR: "12", EMAIL_MIDDAY_HOUR: "13", EMAIL_EVENING_HOUR: "14" }]) {
-    for (const [a, b] of Object.values(windows(emailHours(env)))) assert.ok(a < b, "every window is non-empty");
+    for (const school of [true, false]) {
+      const w = windows({ ...emailHours(env), ...workStarts(env) }, { school });
+      for (const [k, [a, b]] of Object.entries(w)) assert.ok(a < b || (k === "halftime" && a === 0 && b === 0), `${k} is non-empty (or halftime is off)`);
+    }
   }
 });
 
@@ -395,7 +438,7 @@ test("failures: auth errors aren't retried, outages alert only at window starts,
   assert.equal(isAuthError({ code: "ETIMEDOUT", message: "Connection timeout" }), false, "timeouts get the retry");
   assert.equal(isAuthError({ code: "EENVELOPE", message: "421 4.7.0 Try again later" }), false);
   const hours = Array.from({ length: 24 }, (_, h) => h).filter((h) => isAlertHour(CFG, h));
-  assert.deepEqual(hours, [7, 14, 20], "at most three alerts a day");
+  assert.deepEqual(hours, [7, 14, 20, 22], "at most four alerts a day (hourly runs only, never the minute clock)");
   assert.match(hint(403, "permission denied for table progress"), /grant_service_role\.sql/);
   assert.match(hint(401, "Invalid API key"), /SUPABASE_SERVICE_ROLE_KEY/);
   assert.equal(hint(500, "boom"), "");

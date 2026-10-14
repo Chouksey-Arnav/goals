@@ -200,8 +200,9 @@ test("writeReview: Groq down or answering nonsense still sends the review", asyn
 test("schedule: the review has its own window after the evening wrap", () => {
   const CFG = { morningHour: 7, middayHour: 14, eveningHour: 20, reviewHour: 22 };
   const sent = { morning: {}, midday: {} };
-  assert.deepEqual(dueSlots(21, sent, CFG), ["evening"]);
-  assert.deepEqual(dueSlots(22, { ...sent, evening: {} }, CFG), ["review"]);
-  assert.deepEqual(dueSlots(23, { ...sent, evening: {}, review: {} }, CFG), []);
-  assert.deepEqual(dueSlots(22, sent, CFG), ["review"], "a late evening wrap is superseded by the review");
+  const at = (h) => ({ min: h * 60, school: true });
+  assert.deepEqual(dueSlots(at(21), sent, CFG), ["evening"]);
+  assert.deepEqual(dueSlots(at(22), { ...sent, evening: {} }, CFG), ["review"]);
+  assert.deepEqual(dueSlots(at(23), { ...sent, evening: {}, review: {} }, CFG), []);
+  assert.deepEqual(dueSlots(at(22), sent, CFG), ["review"], "a late evening wrap is superseded by the review");
 });

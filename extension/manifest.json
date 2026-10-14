@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Focus guard",
+  "version": "1.0.0",
+  "description": "Blocks YouTube during your work day (school days 2:32 PM to 10 PM, weekends 9 AM to 10 PM). Unlocking costs a typed sentence and a minute, twice a day at most.",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://youtu.be/*",
+    "*://*.youtube-nocookie.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "blocked.html",
+        "blocked.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

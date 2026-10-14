@@ -113,5 +113,18 @@
     "api/*.js": {
       "maxDuration": 60
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/((?!api/).*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "goalsforarnav.vercel.app"
+        }
+      ],
+      "destination": "https://www.arnavcalendar.online/goals/$1",
+      "permanent": false
+    }
+  ]
 }
