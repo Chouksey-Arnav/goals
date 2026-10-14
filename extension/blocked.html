@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blocked: work day</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f6f7fb; --card: #fff; --text: #111827; --muted: #6b7280; --line: #e5e7eb; --brand: #4f46e5; --bad: #b91c1c; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0b0d17; --card: #151827; --text: #eef0f8; --muted: #9aa0b4; --line: #262a3d; --brand: #8b8cf6; --bad: #f87171; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 16px/1.55 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; padding: 16px; }
+    main { max-width: 520px; width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 28px 24px; }
+    h1 { font-size: 26px; line-height: 1.2; margin: 0 0 10px; }
+    p { margin: 0 0 14px; }
+    .muted { color: var(--muted); font-size: 14px; }
+    a.btn, button { display: inline-block; border: 0; border-radius: 12px; padding: 12px 18px; font: inherit; font-weight: 700; cursor: pointer; text-decoration: none; }
+    a.btn { background: var(--brand); color: #fff; }
+    button { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; margin: 6px 0 10px; }
+    #err { color: var(--bad); font-size: 14px; min-height: 1.4em; }
+    .gate { display: none; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Not now. It's your work day.</h1>
+    <p id="why"></p>
+    <p><a class="btn" id="goals" href="#">Open the next lesson in Goals</a></p>
+    <p class="muted" id="count"></p>
+    <button id="want">I still want in</button>
+    <div class="gate" id="gate">
+      <p class="muted">Type this exactly, then wait. It's counted.</p>
+      <p><b id="sentence"></b></p>
+      <input id="typed" autocomplete="off" spellcheck="false" />
+      <button id="go" disabled>Wait</button>
+      <p id="err"></p>
+    </div>
+  </main>
+  <script type="module" src="blocked.js"></script>
+</body>
+</html>

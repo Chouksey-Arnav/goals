@@ -2,12 +2,14 @@
 // Files under api/_lib are helpers, not routes (Vercel skips "_" paths).
 
 import { SUPABASE_URL as PUBLIC_URL } from "../../js/config.js";
+import { parseHM, DEFAULT_WORKDAY_START, DEFAULT_WEEKEND_START, workday } from "../../js/schedule.js";
 
 // The address you actually use. Sign-in and local progress are per address,
 // so a link to any other alias (even of this same deployment) opens a
-// signed-out, empty copy of the app. APP_URL overrides it.
-const DEFAULT_APP_URL = "https://goalsforarnav.vercel.app";
-export const DEFAULT_CALENDAR_URL = "https://calendarforarnav.vercel.app";
+// signed-out, empty copy of the app. APP_URL overrides it. Goals lives at
+// /goals on the calendar's domain (see README, "One site").
+export const DEFAULT_CALENDAR_URL = "https://www.arnavcalendar.online";
+const DEFAULT_APP_URL = `${DEFAULT_CALENDAR_URL}/goals`;
 
 export const MAX_EXTRA = 15;
 
@@ -47,6 +49,8 @@ export function config() {
   const gmailUser = (env.GMAIL_USER || "").trim();
   const to = (env.EMAIL_TO || gmailUser).trim();
   const warnings = [];
+  const brevoSet = [env.BREVO_SMTP_LOGIN, env.BREVO_SMTP_KEY, env.EMAIL_FROM].filter((v) => String(v || "").trim()).length;
+  if (brevoSet && brevoSet < 3) warnings.push("Brevo is half set up (needs BREVO_SMTP_LOGIN, BREVO_SMTP_KEY and EMAIL_FROM), so email goes through Gmail only.");
   return {
     gmailUser,
     // Google shows app passwords as "abcd efgh ijkl mnop"; the spaces aren't part of it.
@@ -77,7 +81,40 @@ export function config() {
     // Local hours (in GOALS_TZ). Each slot sends at the first hourly check
     // inside its window, then never again that day.
     ...emailHours(env, warnings),
+    ...workStarts(env, warnings),
+    // Brevo (optional): sends from your own domain. With Gmail also set,
+    // Gmail is the automatic backup (api/_lib/mailer.js).
+    brevoLogin: (env.BREVO_SMTP_LOGIN || "").trim(),
+    brevoKey: (env.BREVO_SMTP_KEY || "").trim(),
+    fromEmail: (env.EMAIL_FROM || "").trim().toLowerCase(),
+    replyTo: to.toLowerCase(),
   };
+}
+
+// When the work day starts: WORKDAY_START on school days (Mon-Fri, when you
+// get home), WEEKEND_START on weekends. "HH:MM", local time. It must leave
+// room for the midday email and the halftime before the evening wrap; a bad
+// value falls back to the default, loudly.
+export function workStarts(env, warnings = []) {
+  const read = (name, d) => {
+    const raw = env[name];
+    if (raw === undefined || String(raw).trim() === "") return d;
+    const m = parseHM(raw);
+    if (m != null) return m;
+    warnings.push(`${name}: "${raw}" is not a time like 14:32, using the default.`);
+    return d;
+  };
+  const out = { workdayStart: read("WORKDAY_START", DEFAULT_WORKDAY_START), weekendStart: read("WEEKEND_START", DEFAULT_WEEKEND_START) };
+  const hours = emailHours(env);
+  for (const [key, school, d] of [["workdayStart", true, DEFAULT_WORKDAY_START], ["weekendStart", false, DEFAULT_WEEKEND_START]]) {
+    const wd = workday({ ...hours, ...out }, school);
+    const midday = school ? out.workdayStart : hours.middayHour * 60;
+    if (!(out[key] > hours.morningHour * 60 && midday < wd.half && wd.half < hours.eveningHour * 60)) {
+      warnings.push(`${key === "workdayStart" ? "WORKDAY_START" : "WEEKEND_START"} leaves no room for the halftime email before the evening wrap, using the default.`);
+      out[key] = d;
+    }
+  }
+  return out;
 }
 
 export const DEFAULT_HOURS = { morningHour: 7, middayHour: 14, eveningHour: 20, reviewHour: 22 };
@@ -110,9 +147,17 @@ export function emailHours(env, warnings = []) {
 // Names of required variables that are missing, so failures say exactly what to fix.
 export function missing(cfg, need = ["mail", "db"]) {
   const out = [];
-  if (need.includes("mail")) {
-    if (!cfg.gmailUser) out.push("GMAIL_USER");
-    if (!cfg.gmailPass) out.push("GMAIL_APP_PASSWORD");
+  if (need.includes("mail") && !(cfg.brevoLogin && cfg.brevoKey && cfg.fromEmail)) {
+    const anyBrevo = cfg.brevoLogin || cfg.brevoKey || cfg.fromEmail;
+    if (anyBrevo && !(cfg.gmailUser && cfg.gmailPass)) {
+      // Half a Brevo setup and no Gmail: name exactly what Brevo still needs.
+      if (!cfg.brevoLogin) out.push("BREVO_SMTP_LOGIN");
+      if (!cfg.brevoKey) out.push("BREVO_SMTP_KEY");
+      if (!cfg.fromEmail) out.push("EMAIL_FROM");
+    } else {
+      if (!cfg.gmailUser) out.push("GMAIL_USER");
+      if (!cfg.gmailPass) out.push("GMAIL_APP_PASSWORD");
+    }
   }
   if (need.includes("db")) {
     if (!cfg.supabaseUrl) out.push("SUPABASE_URL");

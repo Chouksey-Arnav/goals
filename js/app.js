@@ -384,7 +384,7 @@ function calendarCard() {
     .map((e) => {
       const past = !e.allDay && Date.parse(e.end) < now;
       const live = !e.allDay && Date.parse(e.start) <= now && !past;
-      return `<a class="cal-row ${past ? "past" : ""} ${live ? "live" : ""}" href="${esc(e.url)}" target="_blank" rel="noopener">
+      return `<a class="cal-row ${past ? "past" : ""} ${live ? "live" : ""}" href="${esc(e.url)}">
         <span class="cal-time">${esc(e.allDay ? "All day" : e.time.split(" – ")[0])}</span>
         <span class="cal-title">${esc(e.title)}${e.location ? `<small> · ${esc(e.location)}</small>` : ""}</span>${live ? `<span class="cal-now">now</span>` : ""}</a>`;
     })
@@ -393,7 +393,7 @@ function calendarCard() {
     ? `<div class="small muted" style="margin-top:8px">To-do: ${open.slice(0, 3).map((t) => esc(t.title)).join(" · ")}${open.length > 3 ? ` · +${open.length - 3}` : ""}</div>`
     : "";
   return `<section class="card" id="cal-card">
-    <h2>Today on your calendar <a class="right" href="${esc(a.appUrl || CALENDAR_URL)}" target="_blank" rel="noopener">Calendar →</a></h2>
+    <h2>Today on your calendar <a class="right" href="${esc(a.appUrl || CALENDAR_URL)}/">Calendar →</a></h2>
     ${events.length ? `<div class="cal-list">${rows}</div>${events.length > 6 ? `<div class="small muted">+${events.length - 6} more</div>` : ""}` : `<div class="small muted">Nothing else scheduled today. Plan your study block wherever it fits.</div>`}
     ${todo}
   </section>`;

@@ -127,9 +127,10 @@ test("newHabitEvents: created today, not archived", () => {
 
 test("dueSlots: the weekly kickoff only on the first day of the week, in the morning window", () => {
   const CFG = { morningHour: 7, middayHour: 14, eveningHour: 20 };
-  assert.deepEqual(dueSlots(8, {}, CFG, { weekStart: true }), ["morning", "weekly"]);
-  assert.deepEqual(dueSlots(8, {}, CFG, { weekStart: false }), ["morning"]);
-  assert.deepEqual(dueSlots(15, { morning: {} }, CFG, { weekStart: true }), ["midday"], "no stale kickoff in the afternoon");
+  const at = (h) => ({ min: h * 60, school: true });
+  assert.deepEqual(dueSlots(at(8), {}, CFG, { weekStart: true }), ["morning", "weekly"]);
+  assert.deepEqual(dueSlots(at(8), {}, CFG, { weekStart: false }), ["morning"]);
+  assert.deepEqual(dueSlots(at(15), { morning: {} }, CFG, { weekStart: true }), ["midday"], "no stale kickoff in the afternoon");
   assert.equal(DH.dowOf(MON), 0);
   assert.equal(DH.dowOf("2026-10-18"), 6);
 });
@@ -241,7 +242,7 @@ function fakeIO({ failSends = 0, lose = [] } = {}) {
   };
 }
 const CFG = { to: "me@example.com", cc: ["copy@example.com"], partners: [], appUrl: "https://goals.example", name: "", morningHour: 7, middayHour: 14, eveningHour: 20 };
-const dayCtx = (state, day = WED, hour = 9) => ({ day, hour, state, F: dayFacts(state, day), Fy: dayFacts(state, "2026-10-13"), syncedAt: "now" });
+const dayCtx = (state, day = WED, hour = 9) => ({ day, hour, clock: { min: hour * 60, school: true }, state, F: dayFacts(state, day), Fy: dayFacts(state, "2026-10-13"), syncedAt: "now" });
 
 test("sendEvents: every completion emails once, never twice", async () => {
   const s = withHabits([habit({}, MON)]);

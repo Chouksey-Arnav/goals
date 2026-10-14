@@ -380,6 +380,8 @@ details.section.optional > summary .st { color: var(--muted); }
   background: var(--card); border: 1px solid var(--line-2); white-space: nowrap; filter: grayscale(0.9); transition: filter 0.4s, box-shadow 0.4s;
 }
 .streak-pill b { font-size: 15px; color: var(--text); }
+.streak-pill.site-link { filter: none; color: var(--text); }
+@media (max-width: 380px) { .streak-pill.site-link { display: none; } }
 .streak-pill.lit { filter: none; color: var(--text); box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.35), 0 6px 20px rgba(251, 146, 60, 0.25); }
 
 .law-chip {

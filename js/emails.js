@@ -232,6 +232,7 @@ export function compose(slot, F, ctx) {
   if (slot === "morning") mail = morning(F, ctx);
   else if (slot === "midday") mail = midday(F, ctx);
   else if (slot === "evening") mail = evening(F, ctx);
+  else if (slot === "halftime") return halftime(F, ctx);
   else throw new Error(`Unknown slot: ${slot}`);
   return mail || habitsOnly(slot, F, ctx);
 }
@@ -240,8 +241,8 @@ function footerFor(F, ctx) {
   return [
     `Based on progress synced ${ctx.syncedAt}. Tick lessons while signed in so these stay accurate.`,
     F.sessions
-      ? "Weekend: three emails. The morning plan, the afternoon block the moment your morning block is done (or mid-afternoon), and an evening wrap."
-      : "Weekday: three emails. The morning plan, a mid-afternoon check-in (or the moment the whole sitting is done), and an evening wrap.",
+      ? "Weekend: the morning plan, the afternoon block the moment your morning block is done (or mid-afternoon), a halftime grade, an evening wrap and the day review."
+      : `School day: the morning plan, "work starts" at ${ctx.workStart || "2:32 PM"} (or the moment the whole sitting is done), a halftime grade, an evening wrap and the day review.`,
     `${ctx.appUrl}`,
   ].join("\n");
 }
@@ -394,10 +395,10 @@ function midday(F, ctx) {
       blocks.push(nextBlock(F));
     }
   } else if (d === 0 && !F.shownToday) {
-    subject = `Today: ${plural(n, "lesson")}, ~${fmt(F.plan.targetMin)}, one sitting. Prime it now.`;
-    opener = `Nothing is ticked yet, which is fine: today is one sitting (your plan: ${F.s.when} at ${F.s.where}). Prime it now so it starts at zero effort, and when you sit down, do all ${plural(n, "lesson")} in one go. First up: "${F.next?.title || "the next lesson"}".`;
+    subject = `Work starts now: ${plural(n, "lesson")}, ~${fmt(F.plan.targetMin)}, one sitting.`;
+    opener = `It's ${ctx.workStart || "2:32 PM"}. School's done, so your work day starts now, not after a "quick break" that eats the evening. ${plural(n, "lesson")}, about ${fmt(F.plan.targetMin)}, in one sitting. Phone in another room, YouTube closed, then open "${F.next?.title || "the next lesson"}" and press play.`;
     blocks.push(para(opener));
-    blocks.push(nextBlock(F, "First up when you sit down"));
+    blocks.push(nextBlock(F, "Start here, now"));
   } else {
     subject = `${d} of ${n} done. Same sitting: ${left} to go.`;
     opener = `You're in the middle of today's sitting: ${d} of ${n} lessons done, ${plural(left, "lesson")} left, about ${fmt(leftMin)}. Don't stop and promise to come back later. Finish all of it in one go.`;
@@ -410,6 +411,70 @@ function midday(F, ctx) {
   blocks.push(principleBlock(F, "midday", ctx.dayIndex));
   blocks.push(statsLine(F));
   blocks.push(button(F.complete ? "Close the day" : "Back to it", `${ctx.appUrl}/#today`));
+  return wrap(subject, opener, blocks, footerFor(F, ctx));
+}
+
+// ---------- halftime: half the work day is gone. Are you through half the list?
+//
+// ctx.work: workFacts() at this moment (null without the calendar).
+// ctx.halftime: halftimeScore(). Written by rules, not a model: it's numbers
+// and orders, and it has to arrive on time every day.
+
+const GRADE_COLOR = { A: "#15803d", B: "#2563eb", C: "#b45309", D: "#c2410c", F: "#b91c1c" };
+
+function gradeBadge(letter, line) {
+  return block(
+    `GRADE SO FAR: ${letter} (${line})`,
+    `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 14px"><tr>
+      <td style="width:52px;height:52px;border-radius:14px;background:${GRADE_COLOR[letter]};color:#fff;font-size:28px;font-weight:800;text-align:center;vertical-align:middle">${letter}</td>
+      <td style="padding-left:14px;font-size:14px;color:#4b5563">${esc(line)}</td></tr></table>`
+  );
+}
+
+function halftime(F, ctx) {
+  const H = ctx.halftime;
+  if (!H) return null;
+  const w = ctx.work;
+  const ahead = H.pct >= 50;
+  const subject = ahead
+    ? `Halftime · ${H.letter}. ${H.pct}% done at the halfway mark. Keep the lead.`
+    : `Halftime · ${H.letter}. ${H.pct}% done, and half the day is gone.`;
+  const when = w ? `It's ${w.label.now}. Your work day runs ${w.label.start} to ${w.label.end}, so half of it is gone.` : "Half your work day is gone.";
+  const opener = `${when} You're ${H.pct}% through today's list. Halfway means 50%.`;
+  const blocks = [heading(hi(ctx, "Halftime")), gradeBadge(H.letter, `${H.pct}% of today's list done · target at halftime: 50%`), para(opener)];
+
+  if (w) {
+    // What the first half was spent on.
+    const gap = w.freeSoFar - w.workDone;
+    if (!ahead && w.freeSoFar >= 30 && gap >= 45) {
+      blocks.push(banner(`Since ${w.label.start} you had about ${fmt(w.freeSoFar)} free (after your calendar and ${fmt(Math.round(w.breaks / 2))} for breaks) and logged about ${fmt(w.workDone)} of lessons. About ${fmt(gap)} went somewhere else. That was a choice. The second half is where you make a different one.`, "bad"));
+    }
+    // Whether the rest still fits.
+    const extras = [F.habits.open.length ? plural(F.habits.open.length, "habit") : "", H.open.length ? plural(H.open.length, "to-do") : ""].filter(Boolean).join(" and ");
+    if (w.workLeft > 0) {
+      const fits = w.freeLeft >= w.workLeft;
+      const t = fits
+        ? `Left: about ${fmt(w.workLeft)} of lessons${extras ? `, plus ${extras}` : ""}. Free until ${w.label.end}: about ${fmt(w.freeLeft)}. It fits with ${fmt(w.freeLeft - w.workLeft)} to spare, if you start now. Every 15 minutes of YouTube spends that spare.`
+        : `Left: about ${fmt(w.workLeft)} of lessons${extras ? `, plus ${extras}` : ""}. Free until ${w.label.end}: about ${fmt(w.freeLeft)}. It doesn't fit anymore: you're ${fmt(w.workLeft - w.freeLeft)} short. Do the lessons in order until ${w.label.end}; what's left re-plans. Don't make the gap bigger.`;
+      blocks.push(para(t));
+    } else if (extras) {
+      blocks.push(para(`Lessons are done. Still open: ${extras}.`));
+    }
+  } else {
+    blocks.push(para("The calendar wasn't reachable, so there's no free-time math in this one.", { muted: true }));
+  }
+
+  if (!F.complete && F.next && !F.rest && !F.finished) {
+    blocks.push(para("Next 10 minutes: phone in another room, every non-course tab closed. Then this:"));
+    blocks.push(nextBlock(F, "Do exactly this, now"));
+    blocks.push(progressBar(F));
+  }
+  if (F.habits.open.length) blocks.push(habitsBlock(F, "Habits still open"));
+  if (H.open.length) {
+    const t = `To-dos due: ${H.open.slice(0, 5).map((x) => x.title + (x.overdue ? " (overdue)" : "")).join(" · ")}`;
+    blocks.push(para(t, { size: 14 }));
+  }
+  blocks.push(button("Back to it", `${ctx.appUrl}/#today`));
   return wrap(subject, opener, blocks, footerFor(F, ctx));
 }
 

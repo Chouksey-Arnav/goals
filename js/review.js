@@ -22,6 +22,7 @@ import { BY_ID } from "./digest.js";
 import { looksLikeSpeedTick } from "./habits.js";
 import * as P from "./planner.js";
 import { fmtMinutes as fmt } from "./principles.js";
+import { workFacts, letterFor } from "./worktime.js";
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const list = (a, n = 3) => (a.length <= n ? a.join(", ") : `${a.slice(0, n).join(", ")} and ${a.length - n} more`);
@@ -31,8 +32,10 @@ const q = (s) => `“${String(s).replace(/\s+/g, " ").trim().slice(0, 80)}”`;
 
 // F: dayFacts(state, day). agenda / tomorrow: the calendar's /api/agenda JSON
 // for today and tomorrow (null when the calendar is unreachable).
+// cfg: the work day (js/schedule.js) for the free-time fact; without it, or
+// without the calendar, there's no free-time fact.
 // Returns { facts: [{ id, area, status, text, weight? }], tomorrow: [...] }.
-export function reviewFacts(F, state, { agenda = null, tomorrowAgenda = null, syncedAt = null } = {}) {
+export function reviewFacts(F, state, { agenda = null, tomorrowAgenda = null, syncedAt = null, cfg = null } = {}) {
   const facts = [];
   const add = (area, status, text, extra = {}) => facts.push({ id: `F${facts.length + 1}`, area, status, text, ...extra });
   const t = F.t;
@@ -139,6 +142,22 @@ export function reviewFacts(F, state, { agenda = null, tomorrowAgenda = null, sy
     add("calendar", "info", "Calendar unavailable: to-dos and deadlines aren't in this review.");
   }
 
+  // --- Time: was there room for the plan, and where did it go?
+  // Free = the work day minus calendar events minus a flat allowance for
+  // dinner and breaks (js/worktime.js). The model gets these numbers, so it
+  // can say "you had the time" only when the record says so.
+  const w = cfg ? workFacts(F, agenda, cfg, { day: t }) : null;
+  if (w && w.planMin > 0) {
+    const window = `between ${w.label.start} and ${w.label.end} (after your calendar and ${fmt(w.breaks)} for dinner and breaks)`;
+    if (w.workLeft > 0 && w.freeDay >= w.planMin) {
+      add("time", "missed", `Time: you had about ${fmt(w.freeDay)} free ${window}. The whole plan needed ${fmt(w.planMin)}. You logged about ${fmt(w.workDone)} of lessons. The time was there; it went to something else.`, { flag: "slack" });
+    } else if (w.workLeft > 0) {
+      add("time", "info", `Time: the plan needed ${fmt(w.planMin)} and you had about ${fmt(w.freeDay)} free ${window}. Today was overbooked, so the plan needs fixing, not only the effort. You logged about ${fmt(w.workDone)} of lessons.`);
+    } else {
+      add("time", "info", `Time: about ${fmt(w.freeDay)} free ${window}; you logged about ${fmt(w.workDone)} of lessons.`);
+    }
+  }
+
   // --- Self-reports, labeled as such.
   const ci = state.checkins?.[t];
   if (ci && (ci.energy || ci.focus || ci.calm)) {
@@ -173,8 +192,7 @@ export function gradeDay(facts) {
   if (facts.some((f) => f.flag === "fast")) caps.push(["C", 74, "lessons ticked too fast to count as learning"]);
   if (facts.some((f) => f.area === "chain" && f.status === "missed")) caps.push(["D", 59, "the chain broke or a breach is open"]);
   for (const [, max] of caps) pct = Math.min(pct, max);
-  const letter = pct >= 90 ? "A" : pct >= 75 ? "B" : pct >= 60 ? "C" : pct >= 40 ? "D" : "F";
-  return { pct, letter, capped: caps.map((c) => c[2]) };
+  return { pct, letter: letterFor(pct), capped: caps.map((c) => c[2]) };
 }
 
 // ---------- 3. the prompt
@@ -203,7 +221,7 @@ export const REVIEW_SCHEMA = {
   },
 };
 
-export const REVIEW_SYSTEM = `You are the end-of-day reviewer for one high school student, and you write to them directly as "you". They are preparing for the AI Olympiad (USAAIO Round 1 on Feb 19, 2027), finishing two machine learning courses by Oct 31, and keeping daily habits. They asked for a ruthless mentor, not a cheerleader. In their words: "Don't be a yes person. If something sounds like shit, tell me."
+export const REVIEW_SYSTEM = `You are the end-of-day reviewer for one high school student, and you write to them directly as "you". They are preparing for the AI Olympiad (USAAIO Round 1 on Feb 19, 2027), finishing two machine learning courses by Oct 31, and keeping daily habits. They asked for a ruthless mentor, not a cheerleader. In their words: "Don't be a yes person. If something sounds like shit, tell me." And about these reviews: "You need to be more ruthless. Not too ruthless, but more ruthless. If I should have done this, I could have done all this, I had free time, but I chose to slack off: say that." Their known weak spot: they drift into YouTube between tasks and lose the evening to it.
 
 You receive FACTS computed from their records. Each fact has an id (F1, F2, ...) and a status the code already decided:
 - done: verified in the record.
@@ -219,12 +237,13 @@ Rules (break any and the review is thrown away):
 4. Acknowledge what was done in plain words, once, without adjectives. "You did all 4 lessons." Not "You crushed it."
 5. Name what wasn't done first and specifically. Name the cost: the chain, the pace to Oct 31, the contract penalty, the overdue days.
 6. Call out the pattern if the facts show one: lots of to-dos jotted but few done (planning instead of doing), fast ticks (ticking instead of learning), two-minute versions every day (minimums becoming the habit), bad-day mode, work blocks they scheduled themselves and then skipped, overdue items piling up, lessons ticked without writing the core idea. If there is no pattern, leave it empty. Do not invent one.
-7. Short sentences. Second person ("you"). Direct, like a coach who respects them enough to tell the truth. Not cruel, not sarcastic, no insults. Hard on the work, never on the person.
-8. tomorrow: at most 3 orders, each a concrete action with a time or a first step ("Before school: open 'Introduction to Numpy' and finish it." not "Try to do better"). Use tomorrow's calendar to place them. Cite the fact each order fixes, or null.
-9. did: one line per done or partial fact worth stating. missed: one line per missed fact, most costly first. Cite the fact id in "fact".
-10. headline: max 90 characters, starts with the grade letter, e.g. "C. Half the plan, and the essay is two days overdue."`;
+7. The time fact decides how hard you land. If the time fact is missed ("The time was there"), the misses were a choice, not bad luck: say it in those terms, with that fact's numbers. "You had the time. You chose something else." Make it the verdict's first sentence. Do not name what they did instead (YouTube or anything else): the record doesn't show it. If the time fact says the day was overbooked, say the plan was too big and the fix is the plan, while still naming what didn't get done. With no time fact, don't talk about free time at all.
+8. Short sentences. Second person ("you"). Direct, like a coach who respects them enough to tell the truth. Firm, not cruel: no sarcasm, no insults, no name-calling ("lazy", "pathetic", "loser"). Hard on the choices, never on the person.
+9. tomorrow: at most 3 orders, each a concrete action with a time and a first physical step. The first order starts at TOMORROW'S WORK START below: "2:32 PM: phone in another room, open 'Introduction to Numpy', press play. Nothing else until it's done." Not "Try to do better". Where it helps, one order removes the distraction in advance (YouTube blocked or closed until the lessons are done). Use tomorrow's calendar to place them. Cite the fact each order fixes, or null.
+10. did: one line per done or partial fact worth stating. missed: one line per missed fact, most costly first. Cite the fact id in "fact".
+11. headline: max 90 characters, starts with the grade letter, e.g. "C. Half the plan, and the essay is two days overdue."`;
 
-export function buildReviewMessages({ day, weekday, grade, facts, tomorrow, name }) {
+export function buildReviewMessages({ day, weekday, grade, facts, tomorrow, name, workStart = "2:32 PM" }) {
   const lines = facts.map((f) => `${f.id} [${f.status}] (${f.area}) ${f.text}`);
   return [
     { role: "system", content: REVIEW_SYSTEM },
@@ -235,6 +254,7 @@ export function buildReviewMessages({ day, weekday, grade, facts, tomorrow, name
         `GRADE (fixed): ${grade.letter}, ${grade.pct}% of today's commitments kept${grade.capped.length ? ` (capped because: ${grade.capped.join("; ")})` : ""}.`,
         "FACTS:",
         ...lines,
+        `TOMORROW'S WORK START: ${workStart}.`,
         tomorrow.length ? `TOMORROW ON THE CALENDAR:\n${tomorrow.join("\n")}` : "TOMORROW ON THE CALENDAR: nothing scheduled.",
       ].join("\n"),
     },
@@ -243,7 +263,9 @@ export function buildReviewMessages({ day, weekday, grade, facts, tomorrow, name
 
 // ---------- 4. the checks
 
-const BANNED = /\b(great|good|nice|amazing|awesome|fantastic|excellent|impressive|solid|stellar)\s+(job|work|effort|day|start|progress)\b|\bwell done\b|\bproud\b|\bkeep it up\b|\b(it'?s|that'?s|it is|that is)\s+(ok(ay)?|fine|alright)\b|\bdon'?t worry\b|\bdon'?t be (too )?hard on yourself\b|\btomorrow is a new day\b|\bevery (little )?(step|bit) counts\b|\bprogress is progress\b|\bat least you\b|\byou'?ve got this\b|\bcrush(ed|ing)? it\b|\bkill(ed|ing) it\b|!|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/iu;
+// Banned: praise padding and comfort (they asked for no cheerleading) and
+// insults (ruthless about the choices, never about the person).
+const BANNED = /\b(great|good|nice|amazing|awesome|fantastic|excellent|impressive|solid|stellar)\s+(job|work|effort|day|start|progress)\b|\bwell done\b|\bproud\b|\bkeep it up\b|\b(it'?s|that'?s|it is|that is)\s+(ok(ay)?|fine|alright)\b|\bdon'?t worry\b|\bdon'?t be (too )?hard on yourself\b|\btomorrow is a new day\b|\bevery (little )?(step|bit) counts\b|\bprogress is progress\b|\bat least you\b|\byou'?ve got this\b|\bcrush(ed|ing)? it\b|\bkill(ed|ing) it\b|\b(lazy|pathetic|loser|worthless|useless|stupid|idiot|disgrace(ful)?)\b|!|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/iu;
 
 const numbersIn = (s) => (String(s).match(/\d+(?:[.:]\d+)?/g) || []);
 const sentences = (s) => String(s).replace(/\s+/g, " ").trim().split(/(?<=[.?!])\s+/).filter(Boolean);
@@ -330,22 +352,26 @@ function defaultHeadline(grade, facts) {
   return `${grade.letter}. ${tail}`;
 }
 
-export function fallbackReview({ facts, grade }) {
+export function fallbackReview({ facts, grade, workStart = "2:32 PM" }) {
   const did = facts.filter((f) => f.status === "done" || f.status === "partial").map((f) => ({ fact: f.id, line: f.text }));
-  const missed = facts.filter((f) => f.status === "missed").map((f) => ({ fact: f.id, line: f.text }));
+  // "You had the time" leads: it's the cost behind every other miss.
+  const missed = facts.filter((f) => f.status === "missed").sort((a, b) => (b.flag === "slack") - (a.flag === "slack")).map((f) => ({ fact: f.id, line: f.text }));
   const orders = [];
   const course = facts.find((f) => f.area === "courses" && (f.status === "missed" || f.status === "partial") && /Not done: /.test(f.text));
-  if (course) orders.push(`First thing after school: ${course.text.split("Not done: ")[1].split(/,| and /)[0].replace(/\.$/, "")}. Nothing else until it's done.`);
+  if (course) orders.push(`${workStart}: phone in another room, YouTube closed, open ${course.text.split("Not done: ")[1].split(/,| and /)[0].replace(/\.$/, "")} and press play. Nothing else until it's done.`);
   const overdue = facts.find((f) => f.area === "calendar" && /Overdue/.test(f.text));
   if (overdue) orders.push(`Finish or delete ${overdue.text.match(/“[^”]+”/)?.[0] || "the oldest overdue to-do"} tomorrow. An overdue list you ignore is a list you've stopped believing.`);
   const habit = facts.find((f) => f.area === "habits" && f.status === "missed");
   if (habit) orders.push(`Do ${habit.text.match(/“[^”]+”/)?.[0] || "the habit you missed"} at its set time. Never miss twice.`);
+  const slack = facts.find((f) => f.flag === "slack");
   return {
     headline: defaultHeadline(grade, facts),
-    verdict: `${grade.pct}% of today's commitments kept. ${missed.length ? `${plural(missed.length, "thing")} on your own list didn't happen.` : "Nothing on your list slipped."}`,
+    verdict: `${slack ? "You had the time. You chose something else. " : ""}${grade.pct}% of today's commitments kept. ${missed.length ? `${plural(missed.length, "thing")} on your own list didn't happen.` : "Nothing on your list slipped."}`,
     did,
     missed,
-    pattern: facts.find((f) => f.flag === "listing" || f.flag === "fast")?.text || "",
+    pattern: slack
+      ? "The plan fit inside the free time you had. This wasn't a scheduling problem. It was what you did with the time."
+      : facts.find((f) => f.flag === "listing" || f.flag === "fast")?.text || "",
     tomorrow: orders.slice(0, 3),
     question: missed.length ? "What exactly will you do differently tomorrow, and at what time?" : "What's the hardest thing on tomorrow's list, and when will you start it?",
     dropped: [],

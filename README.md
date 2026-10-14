@@ -1,6 +1,6 @@
 # goals
 
-A daily accountability system built on *Atomic Habits*. Two jobs, and one honest verdict on both every night (see [End-of-day review](#end-of-day-review-groq)):
+A daily accountability system built on *Atomic Habits*, live at **[www.arnavcalendar.online/goals](https://www.arnavcalendar.online/goals/)** (same site as the [calendar](https://www.arnavcalendar.online)). Two jobs, a graded check at halftime, and one honest verdict on both every night (see [Halftime](#halftime-are-you-through-half-the-list) and [End-of-day review](#end-of-day-review-groq)):
 
 1. **Your daily habits.** Reading *Atomic Habits*, your AP World History book, anything you want to do every day. You put them in; the app turns each one into a system and emails you when you create it, every time you do it, and every Monday with a scorecard.
 2. **Finish two Udemy courses by October 31, 2026**, on the way to AI Olympiad prep.
@@ -24,10 +24,11 @@ This README is the project's single source of truth: what exists, why, and the r
 4. **The server decides what gets emailed.** The app may only *hint* (`POST /api/notify`, `POST /api/boost`); the server re-reads progress from the database, checks the session is the owner's, and decides. Never send email from the browser.
 5. **Every email is sent exactly once.** Claim a row in `email_log` first, send, then mark it sent; a failed send releases the claim so the next run retries. New kinds of email need a slot name the table's check constraint allows (a migration in `supabase/migrations/`, applied to the Supabase project "Focus").
 6. **Fail loudly.** Errors say exactly what to fix (see `hint()` in `api/_lib/supabase.js`). Scheduled failures email an alert. Silence must always mean "working".
-7. **No build step, one dependency** (Nodemailer). Static files plus five serverless routes in `api/`. Vercel Hobby limits: daily crons only (hence 24 of them), 12 functions max.
+7. **No build step, one dependency** (Nodemailer). Static files plus five serverless routes in `api/`. Vercel Hobby limits: daily crons only (hence 24 of them, as the backup clock; the real clock is Supabase pg_cron every minute), 12 functions max.
 8. **Honest, not hype.** Numbers come from the record. Praise what happened, name what didn't. Don't add features that let the user fake progress.
 9. **Keep it simple to navigate.** Five tabs, no more. New things go inside an existing tab or under More.
 10. **Never commit secrets.** Server keys live in Vercel env vars only; `js/config.js` holds only the public publishable key.
+11. **Paths are relative.** Goals is served at `/goals/` on the calendar's domain, so the app calls `api/notify`, never `/api/notify` (that's the calendar's API). Assets are relative too. Server-to-server calls with a secret never go to a redirecting address (a redirect drops the `Authorization` header).
 
 ## Navigation
 
@@ -38,6 +39,8 @@ This README is the project's single source of truth: what exists, why, and the r
 | **Courses** | Every lesson of both courses by section. Tick anything in any order. |
 | **Progress** | The chain heatmap, stats, savings jar, check-in trends, milestones. |
 | **More** | Links to *How the system works* (Atomic Habits, contract, olympiad roadmap), sign-in and emails, study plan settings, backup. |
+
+A **Calendar** link in the header goes back to the calendar (same site, same tab).
 
 ## Your daily habits
 
@@ -64,14 +67,17 @@ This README is the project's single source of truth: what exists, why, and the r
 
 ## Every email, and what triggers it
 
-All sent from your Gmail with Nodemailer, to `EMAIL_TO` with `EMAIL_CC` as BCC (the partner report goes to partners only).
+All sent with Nodemailer (Gmail, or Brevo from your own domain with Gmail as backup: see [Sending email](#sending-email-gmail-or-brevo)), to `EMAIL_TO` with `EMAIL_CC` as BCC (the partner report goes to partners only). Times are minute-accurate: the database runs the schedule every minute (see [The clock](#the-clock)).
+
+**The work day.** School days (Mon to Fri) start when you get home: **2:32 PM** (`WORKDAY_START`). Weekends start at **9:00 AM** (`WEEKEND_START`). Both end at the review hour (10 PM). Halftime is the exact middle: **6:16 PM** on school days, **3:30 PM** on weekends.
 
 | Email | Trigger |
 |---|---|
-| **Morning plan** | Hourly cron, first run after 7:00 local. Lessons + today's habits + today's calendar (see [Calendar integration](#calendar-integration)). On course rest days or after the courses end: a habits-only morning email (if any are scheduled). |
-| **Midday check-in** | Weekend morning block done, or the whole weekday done (sent the moment it happens), else 14:00 local. |
-| **Evening wrap** | First run after 20:00 local (until the review hour). Lists habits still open. On course rest days: only if a habit is still open. |
-| **Day review** | First run after 22:00 local (`EMAIL_REVIEW_HOUR`). The whole day judged: lessons, habits and the calendar's to-dos, a grade, what didn't happen, the pattern, three orders for tomorrow. Written by Groq from your record; see [End-of-day review](#end-of-day-review-groq). Not sent when there's nothing to judge. |
+| **Morning plan** | 7:00 local. Lessons + today's habits + today's calendar (see [Calendar integration](#calendar-integration)). On course rest days or after the courses end: a habits-only morning email (if any are scheduled). |
+| **Work starts** (midday) | School days: **2:32 PM**, the moment you're home: "Work starts now: 9 lessons, ~2h 43m, one sitting. Phone in another room." Weekends: the moment the morning block is done, else 14:00. Either: the moment the whole day is done, if that's earlier. |
+| **Halftime** | **6:16 PM** school days, **3:30 PM** weekends. A grade for the first half: you should be through 50% of today's list. Free-time math, what's left, whether it still fits. See [Halftime](#halftime-are-you-through-half-the-list). Not sent if everything is already done. |
+| **Evening wrap** | 20:00 local (until the review hour). Lists habits still open. On course rest days: only if a habit is still open. |
+| **Day review** | 22:00 local (`EMAIL_REVIEW_HOUR`). The whole day judged: lessons, habits, the calendar's to-dos and whether you had the time, a grade, what didn't happen, the pattern, three orders for tomorrow. Written by Groq from your record; see [End-of-day review](#end-of-day-review-groq). Not sent when there's nothing to judge. |
 | **Partner report** | Morning, to `PARTNER_EMAILS`, about yesterday (now including yesterday's habits). |
 | **Weekly kickoff** | Monday morning window: last week's habit scorecard, the weakest habit to fix, this week's plan. With no habits: a prompt to add them. |
 | **Done** | **Every lesson ticked and every habit done**, the moment it syncs. Things synced together (e.g. after being offline) share one email. If the same moment earns the midday email, the completions ride on it instead of sending two. |
@@ -82,7 +88,18 @@ All sent from your Gmail with Nodemailer, to `EMAIL_TO` with `EMAIL_CC` as BCC (
 
 How *Done* and *New habit* are delivered: after every synced tick/habit/new habit the app calls `POST /api/notify`. The server checks the session is the owner's, re-reads progress, and emails whatever completed or was created **today** that has no `email_log` row yet (slots `done:<lesson id>`, `habit:<habit id>`, `new:<habit id>`). Every hourly cron run does the same check as a catch-up, so a dropped request (offline, tab closed) delays the email by at most an hour instead of losing it. Unticking and re-ticking never sends twice. Cap: 60 of these a day. Limit: a tick that only syncs after midnight is not emailed (it's no longer "today").
 
-Volume check: a full day is about 4 daily emails + ~10 lessons + your habits ≈ 15 emails, each to you plus every `EMAIL_CC` address. Consumer Gmail allows roughly 500 recipients a day, so 15 emails × (1 + 15 copies) = 240 still fits, but if `EMAIL_CC` holds other people they will get every tick too. Keep `EMAIL_CC` to your own addresses.
+Volume check: a full day is about 6 daily emails + ~10 lessons + your habits ≈ 15 emails, each to you plus every `EMAIL_CC` address. Consumer Gmail allows roughly 500 recipients a day, so 15 emails × (1 + 15 copies) = 240 still fits, but if `EMAIL_CC` holds other people they will get every tick too. Keep `EMAIL_CC` to your own addresses.
+
+## Halftime: are you through half the list?
+
+[`js/worktime.js`](js/worktime.js) (pure, tested in `tests/worktime.test.js`), written in [`js/emails.js`](js/emails.js) (`halftime()`), sent at the middle of the work day. Rules, not a model: it's numbers and orders, and it has to land on time.
+
+- **The grade.** Share of today's list done right now, weighted like the review (course plan 50, habits 25, the calendar's to-dos due today or overdue 25, renormalized over what exists), judged against the halfway target of 50%. 50% done at halftime is an A; 25% is half the target, a D; nothing is an F.
+- **Where the first half went.** Free time since the work day started = the window minus timed calendar events minus a flat allowance for dinner and breaks (1 h on school days, 2 h on weekends, spread evenly). If that free time was well above the lesson minutes logged and you're behind: "About 1h 14m went somewhere else. That was a choice." It never says where: the record doesn't know.
+- **Whether the rest fits.** Lesson minutes left vs free time until 10 PM: "It fits with 1h 11m to spare, if you start now. Every 15 minutes of YouTube spends that spare." Or: "It doesn't fit anymore: you're 40 min short."
+- **The order.** "Next 10 minutes: phone in another room, every non-course tab closed." Then the exact next lesson.
+
+Without the calendar (unreachable, or `CALENDAR_SECRET` unset) it still sends the grade and the next lesson, and says there's no time math. Preview: `/api/cron?slot=halftime&dry=1&key=SECRET`.
 
 ## End-of-day review (Groq)
 
@@ -90,11 +107,24 @@ Volume check: a full day is about 4 daily emails + ~10 lessons + your habits ≈
 
 1. **Facts, from code.** `reviewFacts()` turns the record into numbered facts, each with a status the code decides: `done`, `partial`, `missed` or `info`. Lessons (planned vs done, which ones), fast ticks (a long lesson ticked within 3 minutes of the last one), lessons ticked without writing the core idea, pace vs Oct 31, the chain and contract breaches, every habit (two-minute version = partial), avoidance slips, and from the calendar: to-dos done, to-dos due today and not done, overdue to-dos (and how late), work blocks you scheduled and skipped, deadlines, and jotting far more to-dos than you finish. Calendar events are `info` ("attendance not tracked"), never accomplishments; check-ins and the daily win are labeled self-reported.
 2. **The grade, from code.** `gradeDay()`: share of commitments kept, course plan 50 / habits 25 / calendar to-dos 25 (renormalized over what exists that day). Fast ticks cap it at C; a broken chain or breach caps it at D. Groq is told the grade and can't change it.
-3. **Words, from Groq.** `openai/gpt-oss-120b` (strict JSON schema, reasoning `medium`; one call a day, well under a cent). The prompt (`REVIEW_SYSTEM`) asks for a ruthless mentor: misses first and specific, their cost named, no praise padding, no comfort, every line citing a fact id, three concrete orders for tomorrow placed around tomorrow's calendar, one hard question.
-4. **Every line checked.** `checkReview()` drops a "done" line citing a fact that wasn't done, any line citing an unknown fact, any number that isn't in the facts, any sentence with praise or comfort ("great job", "it's okay", "tomorrow is a new day", "!", emojis…), and a headline without the right grade letter. Every missed fact the model skipped is added back in the record's own words: nothing missed can be hidden.
-5. **Always sends.** No `GROQ_API_KEY`, a timeout, a rate limit or an answer that doesn't survive the checks: `fallbackReview()` writes the same email from the facts alone (and says so in the footer).
+   **The time fact** ([`js/worktime.js`](js/worktime.js)): free time between the work start and 10 PM, after the calendar and the breaks allowance, vs what the plan needed and what you logged. If the plan fit and you didn't do it, it's `missed` and flagged `slack`: "you had about 5h 28m free… The whole plan needed 3h 03m. You logged about 1h. The time was there; it went to something else." If the day was overbooked it's `info` and says the plan needs fixing. No calendar, no time fact: it never accuses you of free time it can't see. It doesn't change the grade; it explains it.
+3. **Words, from Groq.** `openai/gpt-oss-120b` (strict JSON schema, reasoning `medium`; one call a day, well under a cent). The prompt (`REVIEW_SYSTEM`) asks for a ruthless mentor, and since 2026-10-14 a more ruthless one, in your words: "If I should have done this, I could have done all this, I had free time, but I chose to slack off: say that." When the time fact is `slack`, the verdict opens with "You had the time. You chose something else." Misses first and specific, their cost named, no praise padding, no comfort, every line citing a fact id, three orders for tomorrow starting at tomorrow's work start (2:32 PM on school days) with a first physical step and one that removes the distraction in advance, one hard question.
+4. **Every line checked.** `checkReview()` drops a "done" line citing a fact that wasn't done, any line citing an unknown fact, any number that isn't in the facts, any sentence with praise or comfort ("great job", "it's okay", "tomorrow is a new day", "!", emojis…) or an insult ("lazy", "pathetic", "loser"…: ruthless about the choices, never about the person), and a headline without the right grade letter. Every missed fact the model skipped is added back in the record's own words: nothing missed can be hidden.
+5. **Always sends.** No `GROQ_API_KEY`, a timeout, a rate limit or an answer that doesn't survive the checks: `fallbackReview()` writes the same email from the facts alone (and says so in the footer). It leads with "You had the time. You chose something else." on a `slack` day too.
+
+**Check which one you're getting:** the footer says "Written without Groq" when it's the rules version. As of 2026-10-14 the goals project had **no `GROQ_API_KEY`**, so every review so far (including the "F. You planned a day and didn't do it.") was the rules version. Add the key (the calendar's works) to get Groq's.
 
 The email: grade badge, headline, verdict, **Didn't happen**, **Done**, **The pattern**, **Tomorrow**, **Before bed**. It only knows what synced; the last sync time is one of the facts. Preview: `/api/cron?slot=review&dry=1&key=SECRET`; facts, grade and dropped lines as JSON: add `&format=json`.
+
+## Focus guard: YouTube blocked during the work day
+
+[`extension/`](extension) is a small Chrome extension. During the work day (school days 2:32 PM to 10 PM, weekends 9 AM to 10 PM, the computer's own clock) any visit to YouTube opens a page that says "Not now. It's your work day." with a button to the next lesson. YouTube tabs already open when the block starts get sent there too.
+
+You can still get in, but it costs something: type "I am choosing YouTube over my work right now.", wait 60 seconds, and you get 15 minutes. Two unlocks a day, then it stays shut until 10 PM. The logic is in [`extension/rules.js`](extension/rules.js) (pure, tested in `tests/extension.test.js`); it was also loaded in Chromium and checked to redirect YouTube and leave other sites alone.
+
+**Install** (personal Chrome, once): download this repo (GitHub → Code → Download ZIP), unzip it, open `chrome://extensions`, turn on *Developer mode*, *Load unpacked*, pick the `extension` folder.
+
+Honest limits: it's a speed bump, not a wall. You can turn it off in `chrome://extensions` (that's the point where you'd be choosing YouTube on purpose). It can't be installed on a school-managed Chromebook (the school controls extensions there), and it does nothing on your phone: there, use Screen Time (iPhone) or Digital Wellbeing (Android) to block YouTube 2:32 PM to 10 PM, with a passcode someone else holds.
 
 ## The course plan
 
@@ -141,14 +171,15 @@ The situation picks the idea: missed yesterday → *never miss twice*; nothing d
 
 ## Daily course emails in detail
 
-Three emails a day, written from your synced record, sent through your Gmail with Nodemailer.
+The course emails, written from your synced record, sent with Nodemailer.
 
 **Weekdays are one sitting**: the whole day's list in one go, at your planned time. **Weekends are two blocks**: about half the minutes in the morning (due by the midday hour), the rest in the afternoon. The split keeps plan order (math first) and cuts at the point closest to half the minutes. The Today tab shows the same two blocks.
 
 | Email | When | What it says |
 |---|---|---|
 | **Morning plan** | First hourly check after 7:00 local | The exact Up Next lesson, the checklist with real-work minutes (weekdays: one sitting; weekends: morning block and afternoon block), your pace vs the deadline, the chain, and one Atomic Habits idea as a task. Leads with any unpaid contract breach. After a miss: *never miss twice*. |
-| **Midday check-in** | Weekend: the moment the morning block is done, or 14:00 local. Weekday: 14:00 local, or the moment the whole sitting is done (it never interrupts a sitting halfway) | Weekend: "Morning block done. Afternoon block: 9 lessons, ~2h 34m." / "Morning block: 2 lessons left. Finish it, then the afternoon." Weekday: "Today: 10 lessons, ~3h, one sitting. Prime it now." / "4 of 10 done. Same sitting: 6 to go." Either: "Day complete. Reward unlocked." |
+| **Work starts / midday** | Weekend: the moment the morning block is done, or 14:00 local. School day: 2:32 PM (`WORKDAY_START`), or the moment the whole sitting is done (it never interrupts a sitting halfway) | Weekend: "Morning block done. Afternoon block: 9 lessons, ~2h 34m." / "Morning block: 2 lessons left. Finish it, then the afternoon." School day: "Work starts now: 10 lessons, ~3h, one sitting." (it's 2:32, school's done, phone in another room, open the first lesson) / "4 of 10 done. Same sitting: 6 to go." Either: "Day complete. Reward unlocked." |
+| **Halftime** | Middle of the work day | See [Halftime](#halftime-are-you-through-half-the-list). |
 | **Evening wrap** | First hourly check after 20:00 local | Done: recap, identity vote, tomorrow's first lesson. Partial: what's left, honestly. Nothing: "your chain breaks at midnight", the minimum, and the contract cost if a second miss would breach it. |
 
 Rest days get a short morning note only. After the last lesson you get one celebration email, then they stop.
@@ -172,10 +203,10 @@ Everyone is BCC'd, so nobody sees anyone else's address, and the partner report 
 
 How it works:
 
-- **Schedule.** Vercel's free plan allows only daily crons, each firing somewhere in its hour. `vercel.json` registers 24 of them (one per UTC hour), and [`js/schedule.js`](js/schedule.js) decides which email is due in `GOALS_TZ`. Time zones and daylight saving need no code changes.
+- <a id="the-clock"></a>**The clock.** Supabase pg_cron calls `/api/cron?src=db` every minute ([`20261015000100_goals_tick.sql`](supabase/migrations/20261015000100_goals_tick.sql)), straight at the goals project's own address (`goals-taupe-six.vercel.app`, not through the site's rewrite), with the calendar's shared secret, which Goals accepts as `CALENDAR_SECRET` for that plain run only: no previews, no forced sends, no status. [`js/schedule.js`](js/schedule.js) decides which email is due in `GOALS_TZ` from the local minute and whether it's a school day. Vercel's 24 hourly crons (`vercel.json`, the free plan only allows daily ones) still run as the backup clock; the `email_log` claim keeps the two from ever sending twice. Time zones and daylight saving need no code changes.
 - **Early midday trigger.** After each synced tick the app calls `POST /api/notify` (weekend: morning block done; weekday: day done). The server checks that the session belongs to `EMAIL_TO`, re-reads your progress from the database and decides on its own.
 - **Exactly once.** Table `email_log` has one row per (recipient, day, slot). Inserting it is the claim, so a cron run and an `/api/notify` call racing each other can't both send. A failed send releases the claim and the next hour retries. A sent email is never re-sent. If a run dies between claiming and sending (a timeout), the claim goes stale after 5 minutes and the next run sends it.
-- **Retries and alerts.** A Gmail hiccup (timeout, dropped connection, 4xx) gets one immediate retry on a fresh connection; a wrong password doesn't. If a scheduled run fails for any other reason (database, keys, permissions, config), you get a "your daily emails are failing" email with the exact error, at most at 7:00, 14:00 and 20:00, so an outage can't stay silent.
+- **Retries and alerts.** A send hiccup (timeout, dropped connection, 4xx) gets one immediate retry on a fresh connection; a wrong password doesn't. With Brevo and Gmail both set, a Brevo failure goes straight to Gmail in the same run. If a scheduled run fails for any other reason (database, keys, permissions, config), you get a "your daily emails are failing" email with the exact error, at most at 7:00, 14:00, 20:00 and 22:00, and only from the hourly runs, so the minute clock can't send sixty alerts an hour.
 - **Same plan as the app.** [`js/digest.js`](js/digest.js) computes "where do I stand" for both the Today tab and the emails, and [`js/state.js`](js/state.js) normalizes old saves for both.
 - **Sign-in codes through Gmail, only.** `POST /api/login-code` emails a 6-digit code via Nodemailer. The app never falls back to Supabase's built-in mailer, which only delivers to project team members; if the server can't send, you see its real error. It only sends to `EMAIL_TO`, so strangers can't sign up. It's throttled to one code per 45 s and 10 per day.
 
@@ -193,12 +224,14 @@ The server reads `progress` and writes `email_log` with the secret key (`service
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Supabase → Project Settings → API Keys → **secret** key (`sb_secret_…`). Server only, never in `js/`. |
 | `CRON_SECRET` | yes | A long random string (`openssl rand -hex 32`). Vercel sends it with every cron call. |
 | `GOALS_TZ` | yes | Your IANA time zone, e.g. `America/New_York`, `America/Chicago`, `America/Los_Angeles` |
-| `APP_URL` | no | Defaults to `https://goalsforarnav.vercel.app`. Must be the address you actually use: sign-in and local progress belong to one address, so links to another alias open an empty, signed-out app. |
+| `APP_URL` | no | Defaults to `https://www.arnavcalendar.online/goals`. Must be the address you actually use: sign-in and local progress belong to one address, so links to another alias open an empty, signed-out app. |
+| `WORKDAY_START` / `WEEKEND_START` | no | When the work day starts, `HH:MM` local. Defaults `14:32` (school days, Mon to Fri) and `09:00` (weekends). Halftime is halfway from there to `EMAIL_REVIEW_HOUR`. A value that leaves no room for halftime before the evening wrap falls back to the default, with a warning in `?status=1`. |
+| `BREVO_SMTP_LOGIN` / `BREVO_SMTP_KEY` / `EMAIL_FROM` | no | Send from your own domain through Brevo; all three or none. With the Gmail variables also set, Gmail is the automatic backup. See [Sending email](#sending-email-gmail-or-brevo). |
 | `EMAIL_CC` | no | Up to 15 comma-separated addresses that get copies of your 3 daily emails |
 | `PARTNER_EMAILS` | no | Up to 15 comma-separated accountability partners for the morning partner report |
 | `GOALS_NAME` | no | Your first name, used in the greeting and in partner report subjects. Defaults to the first name on your signed contract. Set it if you have partners, or reports say "Goals check-in". |
 | `EMAIL_MORNING_HOUR` / `EMAIL_MIDDAY_HOUR` / `EMAIL_EVENING_HOUR` / `EMAIL_REVIEW_HOUR` | no | Local hours, default 7 / 14 / 20 / 22, in that order |
-| `GROQ_API_KEY` | no | Writes the end-of-day review ([console.groq.com/keys](https://console.groq.com/keys); the calendar's key works). Without it the review is written from your record by rules. |
+| `GROQ_API_KEY` | no, but set it | Writes the end-of-day review ([console.groq.com/keys](https://console.groq.com/keys); the calendar's key works). Without it the review is written from your record by rules. **Not set on the goals project as of 2026-10-14.** |
 | `GROQ_MODEL` | no | Defaults to `openai/gpt-oss-120b`. Only if Groq retires it. |
 
 Then redeploy, sign in on the site with the `EMAIL_TO` address, and tick one lesson.
@@ -209,21 +242,28 @@ To check it at any time, replace `SECRET`:
 - `/api/cron?slot=morning&dry=1&key=SECRET` previews an email in the browser (`slot=review`, `slot=partner`, `weekly`, `done` (today's latest completion) and `new` (your newest habit) work too; add `&format=text` for plain text).
 - `/api/cron?slot=evening&force=1&key=SECRET` sends one now, ignoring "already sent".
 
-Honest limits: the emails only know what has synced, so ticks on a signed-out device are invisible to them. Vercel Hobby crons can fire up to 59 minutes into their hour, so "7:00" means 7:00 to 7:59.
+Honest limits: the emails only know what has synced, so ticks on a signed-out device are invisible to them. The minute clock makes "2:32 PM" mean 2:32 PM; if the database clock stops, the hourly Vercel backup still sends everything, up to 59 minutes late. School holidays aren't known: on a weekday off, "work starts" still comes at 2:32 PM.
+
+### Sending email: Gmail or Brevo
+
+[`api/_lib/mailer.js`](api/_lib/mailer.js), the same file as the calendar's. Gmail (`GMAIL_USER` + `GMAIL_APP_PASSWORD`) works today: about 500 recipients a day. Brevo (`BREVO_SMTP_LOGIN` + `BREVO_SMTP_KEY` + `EMAIL_FROM`) sends from your own domain, e.g. `goals@arnavcalendar.online`; the free plan is 300 emails a day (each recipient counts), and replies go to `EMAIL_TO`. With both set, Brevo sends and Gmail is the backup. Setup steps are in the calendar's README (*Sending email*); `/api/cron?status=1` shows which providers are active.
 
 ## Calendar integration
 
-Goals and [Calendar](https://github.com/Chouksey-Arnav/calendarforarnav) share one Supabase project and one account, so each can show the other:
+Goals and [Calendar](https://github.com/Chouksey-Arnav/calendarforarnav) share one site, one Supabase project and one account, so each can show the other.
+
+**One site.** Goals is at `https://www.arnavcalendar.online/goals/`: the calendar project's `vercel.json` rewrites `/goals/*` to this project's own address, `goals-taupe-six.vercel.app` (never redirect that one). `goalsforarnav.vercel.app` redirects its pages to `/goals/` (this repo's `vercel.json`; `/api/*` still answers there). Because the two apps are now the same origin, the Today card and the calendar's study card need no CORS. After the move, sign in once at the new address (your progress comes back from Supabase; tick nothing before signing in on a new address).
 
 - **Today tab:** a "Today on your calendar" card, right under your habits, lists today's events and open to-dos. It loads after the tab renders, from the calendar's `/api/agenda` with your session token, and hides itself if you're signed out or the calendar is unreachable.
 - **Morning email:** the same agenda appears after the checklist and habits, so the study plan is written around the rest of your day. It is in every kind of morning email: course days, rest days, the day the courses finish, and the habits-only morning email after that. The server fetches it with `CALENDAR_SECRET` (the calendar project's `CRON_SECRET`). If it's missing or the calendar is down, the email goes out without that section after at most 5 seconds.
-- **End-of-day review:** today's and tomorrow's agenda, plus the calendar's `tasks.blocks` (work blocks that started today, done or not) and `tasks.addedToday` (how many to-dos you jotted). Without `CALENDAR_SECRET` the review covers Goals only and says so.
-- **The other way:** `GET /api/today` (your session token) returns today's ring, next lesson and streak as JSON. The calendar shows it as a study card. CORS allows only `CALENDAR_URL`.
+- **Halftime and end-of-day review:** today's agenda (event `start`/`end` for the free-time math) and, for the review, tomorrow's, plus the calendar's `tasks.blocks` (work blocks that started today, done or not) and `tasks.addedToday` (how many to-dos you jotted). Without `CALENDAR_SECRET` the review covers Goals only and says so.
+- **The clock:** the same secret lets the database's minute job trigger the schedule (see [The clock](#the-clock)).
+- **The other way:** `GET /goals/api/today` (your session token) returns today's ring, next lesson and streak as JSON. The calendar shows it as a study card. Same origin on the site; CORS allows only `CALENDAR_URL`'s origin otherwise.
 
 | Name | Required | Value |
 |---|---|---|
-| `CALENDAR_SECRET` | no | The calendar project's `CRON_SECRET` |
-| `CALENDAR_URL` | no | Defaults to `https://calendarforarnav.vercel.app` |
+| `CALENDAR_SECRET` | no (needed for the calendar sections and the minute clock) | The calendar project's `CRON_SECRET` (= Vault `cal_cron_secret`) |
+| `CALENDAR_URL` | no | Defaults to `https://www.arnavcalendar.online`. Never a redirecting address: the agenda call carries a secret. |
 
 ## Olympiad focus
 
@@ -264,12 +304,14 @@ In [`supabase/migrations`](supabase/migrations), applied in order to the Supabas
 | `20261012030000_grant_service_role.sql` | explicit grants for the secret key |
 | `20261013000000_email_log_events.sql` | `weekly`, `done:*`, `habit:*`, `new:*` slots. **Applied 2026-10-12.** |
 | `20261014000000_email_log_review_slot.sql` | `review` slot. **Applied 2026-10-13** (as `email_log_review_slot`). |
+| `20261015000000_email_log_halftime_slot.sql` | `halftime` slot. **Applied 2026-10-14** (as `email_log_halftime_slot`). |
+| `20261015000100_goals_tick.sql` | the minute clock: `goals_tick()` + pg_cron job `goals-emails`, Vault `goals_cron_url`. **Applied 2026-10-14.** |
 
 ## Run locally
 
 ```bash
 python3 -m http.server 8000   # then open http://localhost:8000
-npm test                      # planner, habits, schedule, email, review and delivery tests (Node 20+)
+npm test                      # planner, habits, schedule, email, halftime, review, focus guard and delivery tests (Node 20+)
 ```
 
 The site is static with no build step. The only dependency is Nodemailer, used by the five serverless routes in `api/` (`cron`, `notify`, `boost`, `login-code`, `today`). Vercel serves everything else as-is.
@@ -279,6 +321,17 @@ Built with help from Claude Code (AI).
 ## Changelog
 
 Newest first. Every change adds an entry here (see rule 1).
+
+### 2026-10-14 · One site, a 2:32 PM work day, halftime, a harder review, Focus guard
+- **Goals moved to `https://www.arnavcalendar.online/goals/`** (rewrite in the calendar project). API calls and the manifest are relative; `goalsforarnav.vercel.app` redirects its pages there. `APP_URL` and `CALENDAR_URL` default to the domain. Rule 11 added. A **Calendar** link in the header.
+- **The work day starts at 2:32 PM on school days** (`WORKDAY_START`; weekends `WEEKEND_START`, 9:00). The weekday midday email is now "Work starts now", sent at 2:32 PM.
+- **Halftime email** ([`js/worktime.js`](js/worktime.js), `halftime()` in `js/emails.js`): a grade against 50% done at the middle of the work day, where the first half's free time went, whether the rest still fits, and the next lesson. Migration `20261015000000_email_log_halftime_slot.sql`, applied.
+- **Minute-accurate emails:** Supabase pg_cron calls `/api/cron?src=db` every minute (migration `20261015000100_goals_tick.sql`, applied); the hourly Vercel crons stay as backup. Alerts only from hourly runs.
+- **More ruthless review:** a code-computed time fact (free time vs plan vs logged work); "You had the time. You chose something else." when the plan fit and didn't happen; orders start at tomorrow's work start; insults are filtered out like praise.
+- **Focus guard** ([`extension/`](extension)): a Chrome extension that blocks YouTube during the work day, with a costly, capped unlock.
+- **Brevo** as an optional sender, Gmail as automatic backup (shared `api/_lib/mailer.js`).
+- Found: `GROQ_API_KEY` was never set on the goals project, so every review so far was the rules version.
+- Tests: 100 → 114.
 
 ### 2026-10-13 · End-of-day review (Groq)
 - **Day review email** at 22:00 local ([`js/review.js`](js/review.js)): the whole day, Goals and Calendar, judged from facts the code computes, graded by code, written by Groq (`openai/gpt-oss-120b`) as a ruthless mentor. Every line is checked against the record: no claimed accomplishments that didn't happen, no invented numbers, no praise or comfort phrases, every miss shown. Falls back to a rules-written review without Groq.

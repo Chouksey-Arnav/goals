@@ -11,17 +11,19 @@ import { habitFacts } from "./dailyhabits.js";
 export const LESSONS = allLessons();
 export const BY_ID = Object.fromEntries(LESSONS.map((l) => [l.id, l]));
 
-// "YYYY-MM-DD" and hour (0-23) of an instant in an IANA time zone. The email
+// "YYYY-MM-DD", hour (0-23) and minute of the day of an instant in an IANA time zone. The email
 // server runs in UTC; your day does not.
 export function zonedParts(date, timeZone) {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-US", {
-      timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23",
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
     })
       .formatToParts(date)
       .map((p) => [p.type, p.value])
   );
-  return { day: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) % 24 };
+  const hour = Number(parts.hour) % 24;
+  // min: minutes since local midnight (the schedule runs on minutes).
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, hour, min: hour * 60 + Number(parts.minute) };
 }
 
 // state: the app's saved state (already normalized).
