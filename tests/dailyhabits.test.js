@@ -2,11 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fresh, normalize } from "../js/state.js";
-import { dayFacts, BY_ID } from "../js/digest.js";
+import { dayFacts, dayAllDone, BY_ID } from "../js/digest.js";
 import * as DH from "../js/dailyhabits.js";
 import { compose, composePartner, composeDone, composeHabitNew, composeWeekly } from "../js/emails.js";
 import { dueSlots } from "../js/schedule.js";
-import { sendEvents, MAX_EVENT_ROWS } from "../api/_lib/run.js";
+import { sendEvents, sendSlot, MAX_EVENT_ROWS } from "../api/_lib/run.js";
 
 const MON = "2026-10-12";
 const WED = "2026-10-14";
@@ -242,10 +242,12 @@ function fakeIO({ failSends = 0, lose = [] } = {}) {
   };
 }
 const CFG = { to: "me@example.com", cc: ["copy@example.com"], partners: [], appUrl: "https://goals.example", name: "", morningHour: 7, middayHour: 14, eveningHour: 20 };
+// Every-tick mode (settings.emailEachTick). Quiet mode is the default.
+const loud = (state) => ((state.settings.emailEachTick = true), state);
 const dayCtx = (state, day = WED, hour = 9) => ({ day, hour, clock: { min: hour * 60, school: true }, state, F: dayFacts(state, day), Fy: dayFacts(state, "2026-10-13"), syncedAt: "now" });
 
-test("sendEvents: every completion emails once, never twice", async () => {
-  const s = withHabits([habit({}, MON)]);
+test("sendEvents, every-tick mode: every completion emails once, never twice", async () => {
+  const s = loud(withHabits([habit({}, MON)]));
   const plan = dayFacts(s, WED).planLessons;
   s.completed[plan[0].id] = WED;
   const f = fakeIO();
@@ -265,7 +267,7 @@ test("sendEvents: every completion emails once, never twice", async () => {
 });
 
 test("sendEvents: a failed send gives the claims back and the next run retries", async () => {
-  const s = withHabits([habit({}, MON)], { [WED]: { h1: "full" } });
+  const s = loud(withHabits([habit({}, MON)], { [WED]: { h1: "full" } }));
   const f = fakeIO({ failSends: 1 }); // (Gmail's own one retry lives in sendMail, outside this fake)
   const r = await sendEvents(CFG, dayCtx(s), { io: f.io });
   assert.equal(r[0].sent, false);
@@ -276,7 +278,7 @@ test("sendEvents: a failed send gives the claims back and the next run retries",
 });
 
 test("sendEvents: a racing run that already claimed an item wins; we don't double send", async () => {
-  const s = withHabits([habit({}, MON)], { [WED]: { h1: "full" } });
+  const s = loud(withHabits([habit({}, MON)], { [WED]: { h1: "full" } }));
   const f = fakeIO({ lose: ["habit:h1"] });
   assert.deepEqual(await sendEvents(CFG, dayCtx(s), { io: f.io }), []);
   assert.equal(f.outbox.length, 0);
@@ -304,12 +306,94 @@ test("sendEvents: finishing the day rides on the midday email instead of sending
   assert.match(f.outbox[0].text, /Just done:/);
   assert.ok(f.rows.get("midday").sent_at, "midday is now taken, so the 14:00 run won't repeat it");
   for (const l of plan) assert.ok(f.rows.get(`done:${l.id}`).sent_at);
-  // In the evening window the midday email is off the table: a plain done email.
+  // In the evening window the midday email is off the table: a plain done
+  // email in every-tick mode, the day-complete email in quiet mode.
+  loud(s);
   const g = fakeIO();
   g.rows.set("morning", { sent_at: "x" });
   await sendEvents(CFG, dayCtx(s, WED, 21), { io: g.io });
   assert.match(g.outbox[0].subject, /^✓ \d+ done/);
   assert.equal(g.rows.has("midday"), false);
+});
+
+test("quiet mode (default): no email per tick, one email when the whole day is done", async () => {
+  const s = withHabits([habit({}, MON)]);
+  assert.equal(s.settings.emailEachTick, false, "quiet is the default");
+  const plan = dayFacts(s, WED).planLessons;
+  const f = fakeIO();
+  f.rows.set("morning", { sent_at: "x" });
+  f.rows.set("midday", { sent_at: "x" });
+  // Ticking lessons and the habit one by one: silence, and nothing claimed.
+  for (const l of plan.slice(0, -1)) {
+    s.completed[l.id] = WED;
+    assert.deepEqual(await sendEvents(CFG, dayCtx(s, WED, 16), { io: f.io }), []);
+  }
+  s.habitLog[WED] = { h1: "full" };
+  await sendEvents(CFG, dayCtx(s, WED, 16), { io: f.io });
+  assert.equal(f.outbox.length, 0);
+  assert.equal([...f.rows.keys()].filter((k) => k.includes(":")).length, 0, "ticks wait unclaimed");
+  // The last lesson: one email for the whole day.
+  s.completed[plan.at(-1).id] = WED;
+  await sendEvents(CFG, dayCtx(s, WED, 16), { io: f.io });
+  assert.equal(f.outbox.length, 1);
+  assert.match(f.outbox[0].subject, new RegExp(`^✓ Day complete: ${plan.length} lessons and 1 habit\\. Chain at`));
+  assert.match(f.outbox[0].text, /none per tick/);
+  assert.ok(f.rows.get("done:day").sent_at);
+  for (const l of plan) assert.ok(f.rows.get(`done:${l.id}`).sent_at, "every tick is recorded with it");
+  // Again, and a bonus lesson afterwards: nothing more.
+  await sendEvents(CFG, dayCtx(s, WED, 17), { io: f.io });
+  const bonus = Object.keys(BY_ID).find((id) => !s.completed[id] && !plan.some((l) => l.id === id));
+  s.completed[bonus] = WED;
+  await sendEvents(CFG, dayCtx(s, WED, 18), { io: f.io });
+  assert.equal(f.outbox.length, 1, "one email for the day, ever");
+});
+
+test("quiet mode: turning on every-tick mid-day emails the ticks that were waiting, once", async () => {
+  const s = withHabits([habit({}, MON)], { [WED]: { h1: "full" } });
+  const plan = dayFacts(s, WED).planLessons;
+  s.completed[plan[0].id] = WED;
+  const f = fakeIO();
+  await sendEvents(CFG, dayCtx(s, WED, 16), { io: f.io });
+  assert.equal(f.outbox.length, 0);
+  loud(s);
+  await sendEvents(CFG, dayCtx(s, WED, 16), { io: f.io });
+  assert.equal(f.outbox.length, 1);
+  assert.match(f.outbox[0].subject, /^✓ 2 done/);
+});
+
+test("quiet mode: a failed day-complete send is retried; a racing run that won it sends instead", async () => {
+  const s = withHabits([], {});
+  for (const l of dayFacts(s, WED).planLessons) s.completed[l.id] = WED;
+  const f = fakeIO({ failSends: 1 });
+  f.rows.set("morning", { sent_at: "x" });
+  f.rows.set("midday", { sent_at: "x" });
+  await sendEvents(CFG, dayCtx(s, WED, 16), { io: f.io });
+  assert.equal(f.rows.has("done:day"), false, "claim released");
+  await sendEvents(CFG, dayCtx(s, WED, 16), { io: f.io });
+  assert.equal(f.outbox.length, 1);
+  const g = fakeIO({ lose: ["done:day"] });
+  g.rows.set("morning", { sent_at: "x" });
+  g.rows.set("midday", { sent_at: "x" });
+  assert.deepEqual(await sendEvents(CFG, dayCtx(s, WED, 16), { io: g.io }), []);
+  assert.equal(g.rows.size, 2, "no tick claimed by the loser");
+});
+
+test("dayAllDone, and the evening wrap stays silent once the day is done", async () => {
+  const s = withHabits([habit({}, MON)]);
+  const plan = dayFacts(s, WED).planLessons;
+  for (const l of plan) s.completed[l.id] = WED;
+  assert.equal(dayAllDone(dayFacts(s, WED)), false, "a habit is still open");
+  s.habitLog[WED] = { h1: "min" };
+  assert.equal(dayAllDone(dayFacts(s, WED)), true, "the two-minute version counts");
+  const r = await sendSlot(CFG, dayCtx(s, WED, 20), "evening");
+  assert.equal(r.sent, false);
+  assert.match(r.reason, /review covers tonight/);
+  const rest = withHabits([]);
+  rest.settings.weekendMin = 0;
+  assert.equal(dayAllDone(dayFacts(rest, SAT)), false, "nothing on the list is never 'all done'");
+  const habitsOnly = withHabits([habit({}, MON)], { [SAT]: { h1: "full" } });
+  habitsOnly.settings.weekendMin = 0;
+  assert.equal(dayAllDone(dayFacts(habitsOnly, SAT)), true, "rest day: the habits are the list");
 });
 
 test("sendEvents: daily cap, and nothing without synced progress", async () => {

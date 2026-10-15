@@ -6,6 +6,7 @@
 // a phone and a laptop; not built for two devices editing at the same moment.
 
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
+import { mergeStates } from "./state.js";
 
 // API calls are relative ("api/notify", not "/api/notify"): on the site,
 // Goals is at /goals/, so they must go to /goals/api/..., not the calendar's
@@ -26,13 +27,37 @@ function emit() {
   hooks.onStatus(status);
 }
 
+// One sign-in for the whole site. Goals and the calendar are the same origin
+// (www.arnavcalendar.online) and the same Supabase project, so they share
+// one session under the calendar's storage key: sign in to either and you're
+// signed in to both. supabase-js locks token refreshes per storage key across
+// tabs, so the two apps never race each other for the refresh token.
+export const AUTH_KEY = "cal-auth";
+// Where Goals kept its own session before 2026-10-15 (supabase-js's default).
+const OLD_AUTH_KEY = `sb-${new URL(SUPABASE_URL || "https://x.supabase.co").hostname.split(".")[0]}-auth-token`;
+
+// Move, never copy: two live copies of one refresh token would sign one app
+// out the first time the other refreshed it. If the calendar already has a
+// session, that one wins and Goals' old one is dropped.
+export function adoptSharedSession(store) {
+  try {
+    const old = store.getItem(OLD_AUTH_KEY);
+    if (!old) return;
+    if (!store.getItem(AUTH_KEY)) store.setItem(AUTH_KEY, old);
+    store.removeItem(OLD_AUTH_KEY);
+  } catch {
+    // Storage blocked (private mode): nothing to move.
+  }
+}
+
 export async function initSync(h) {
   hooks = { ...hooks, ...h };
   if (!status.enabled) return;
   try {
     const { createClient } = await import(SDK);
+    adoptSharedSession(localStorage);
     client = createClient(SUPABASE_URL, SUPABASE_KEY, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: AUTH_KEY },
     });
     client.auth.onAuthStateChange((_evt, session) => {
       const was = user?.id;
@@ -116,7 +141,20 @@ export async function signOut() {
   emit();
 }
 
-// Decide which copy wins, then make both sides equal.
+// Which account this browser's copy was last reconciled with (kept outside
+// the synced state on purpose: it's a fact about this device).
+const SYNCED_WITH = "goals.syncedWith";
+const syncedWith = () => {
+  try {
+    return localStorage.getItem(SYNCED_WITH);
+  } catch {
+    return null;
+  }
+};
+
+// Decide which copy wins, then make both sides equal. The first time a
+// device meets an account, the two copies are merged instead (mergeStates):
+// nothing done on either side is lost.
 export async function reconcile() {
   if (!client || !user || status.busy) return;
   status.busy = true;
@@ -126,13 +164,23 @@ export async function reconcile() {
     const local = hooks.getState();
     const localAt = local?.updatedAt || 0;
     const remoteAt = data ? Date.parse(data.updated_at) : 0;
-    if (data && remoteAt > localAt) {
+    if (data && localAt > 0 && syncedWith() !== user.id) {
+      const merged = mergeStates(data.state, local);
+      merged.updatedAt = Date.now();
+      hooks.setState(merged);
+      await write(hooks.getState());
+    } else if (data && remoteAt > localAt) {
       hooks.setState(data.state);
     } else if (!data || localAt > remoteAt) {
       await write(local);
     }
     status.lastSync = new Date();
     status.error = null;
+    try {
+      localStorage.setItem(SYNCED_WITH, user.id);
+    } catch {
+      // Storage blocked: the next visit merges again, which loses nothing.
+    }
   } catch (e) {
     status.error = "Sync failed. Your progress is still saved on this device.";
   } finally {

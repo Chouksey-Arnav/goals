@@ -771,12 +771,15 @@ function weekBlock(x, title) {
 
 // ---------- the moment you finish something
 //
-// One email per completion. Ticks synced together (e.g. offline, then back
-// online) share one email so nothing is lost and the inbox isn't flooded.
+// Quiet mode (the default): one email, the moment the whole day is done
+// (ctx.dayComplete). Every-tick mode (settings.emailEachTick): one email per
+// completion. Ticks synced together (e.g. offline, then back online) share
+// one email so nothing is lost and the inbox isn't flooded.
 // items: completionEvents() entries: { kind: "lesson", lesson } | { kind: "habit", habit, mode }
 
-export function composeDone(F, items, ctx) {
-  if (!items?.length) return null;
+export function composeDone(F, items = [], ctx = {}) {
+  items = items || [];
+  if (!items.length && !ctx.dayComplete) return null;
   const lessons = items.filter((e) => e.kind === "lesson");
   const habits = items.filter((e) => e.kind === "habit");
   const hx = (h) => F.habits.list.find((x) => x.h.id === h.id);
@@ -786,7 +789,17 @@ export function composeDone(F, items, ctx) {
   let subject;
   let opener;
 
-  if (items.length === 1 && habits.length === 1) {
+  if (ctx.dayComplete) {
+    // Quiet mode: one email for the whole day, the moment the last thing is done.
+    const parts = [
+      F.planDone.length ? plural(F.planDone.length, "lesson") : F.mode === "min" && F.complete ? "the bad-day minimum" : null,
+      F.habits.done.length ? plural(F.habits.done.length, "habit") : null,
+    ].filter(Boolean);
+    subject = `✓ Day complete: ${parts.join(" and ")}. Chain at ${F.streak}.`;
+    opener = `Everything on today's list is done${F.doneMin ? `: about ${fmt(F.doneMin)} of real work` : ""}. ${F.s.bundle && F.mode === "full" && F.complete ? `Reward unlocked: ${F.s.bundle}. Take it now.` : "That's a vote for who you're becoming."}`;
+    blocks.push(heading("✓ Day complete"), para(opener));
+    if (F.planLessons.length) blocks.push(progressBar(F));
+  } else if (items.length === 1 && habits.length === 1) {
     const e = habits[0];
     const x = hx(e.habit);
     const w = x?.week;
@@ -822,7 +835,9 @@ export function composeDone(F, items, ctx) {
   if (F.habits.open.length) blocks.push(habitsBlock(F));
   blocks.push(statsLine(F));
   blocks.push(button("Open Goals", `${ctx.appUrl}/#${lessons.length ? "today" : "habits"}`));
-  const footer = `Sent because you just finished something. Every completion gets one of these.\n${ctx.appUrl}`;
+  const footer = ctx.dayComplete
+    ? `One email when the whole day is done, none per tick. Want one for every tick? Goals → More → Sign-in and emails.\n${ctx.appUrl}`
+    : `Sent because you just finished something. Every completion gets one of these (turn that off under More → Sign-in and emails).\n${ctx.appUrl}`;
   return wrap(subject, opener, blocks, footer);
 }
 
@@ -841,7 +856,7 @@ export function composeHabitNew(F, h, ctx) {
     ["1 · Make it obvious", `${h.after ? "The habit you already do is the cue, so there's nothing to remember." : "Same time, same place, every time, so there's nothing to decide."} Put what you need for it where you'll see it at that moment${h.place ? ` (${h.place})` : ""}. Tonight, not tomorrow.`],
     ["2 · Make it attractive", h.identity ? `Every time you do it you cast a vote for: "${h.identity}" You're not trying to do a habit; you're becoming the kind of person who does it.` : "Pair it with something you enjoy, and do it alongside people who already do it. Add an identity to the habit in the app: \"I am someone who ...\""],
     ["3 · Make it easy", `On a bad day, do the two-minute version: ${h.twoMin}. That still counts. The goal is to never miss, not to be perfect.`],
-    ["4 · Make it satisfying", "Tick it in Goals the moment you finish. You'll get an email for every completion, a chain that grows, and a week score every Monday."],
+    ["4 · Make it satisfying", "Tick it in Goals the moment you finish. The chain grows, the day-complete email lands when everything's done, and the week score comes every Monday."],
   ];
   const blocks = [
     heading(`Here's your habit. Let's make it real.`),

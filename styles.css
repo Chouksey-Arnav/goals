@@ -469,6 +469,10 @@ a.btn { text-decoration: none; color: inherit; }
 .phase-top span:last-child { color: var(--faint); font-weight: 600; }
 
 /* ---------- close the day */
+.close-fold > summary { list-style: none; cursor: pointer; }
+.close-fold > summary::-webkit-details-marker { display: none; }
+.close-fold > summary h2 { margin: 0; }
+.close-fold[open] > summary h2 { margin-bottom: 12px; }
 .close-day.closed { border-color: color-mix(in srgb, var(--good) 35%, transparent); }
 .intention.stack { font-size: 16px; margin: 0; }
 .ci-row { display: grid; grid-template-columns: 70px 1fr; gap: 10px; align-items: center; margin-top: 8px; }
