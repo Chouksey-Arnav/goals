@@ -100,8 +100,11 @@ export function halftimeScore(F, agenda) {
   if (coursesOn) parts.push({ w: 50, s: F.mode === "min" ? (F.shownToday ? 1 : 0) : F.pct / 100 });
   const due = F.habits.due;
   if (due.length) parts.push({ w: 25, s: due.reduce((a, x) => a + (x.status === "full" ? 1 : x.status === "min" ? 0.5 : 0), 0) / due.length });
-  const done = agenda?.tasks?.doneToday || [];
-  const open = (agenda?.tasks?.open || []).filter((x) => x.due === F.t || x.overdue);
+  // The calendar's ledger when it sends one (each to-do once, pushes off
+  // today included: see review.js); otherwise its plain lists.
+  const L = agenda?.tasks?.ledger;
+  const done = L && Array.isArray(L.done) ? L.done : agenda?.tasks?.doneToday || [];
+  const open = L && Array.isArray(L.open) ? L.open : (agenda?.tasks?.open || []).filter((x) => x.due === F.t || x.overdue);
   if (done.length + open.length) parts.push({ w: 25, s: done.length / (done.length + open.length) });
   if (!parts.length) return null;
   const total = parts.reduce((a, p) => a + p.w, 0);

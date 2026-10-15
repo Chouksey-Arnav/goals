@@ -391,9 +391,16 @@ function calendarCard() {
         <span class="cal-title">${esc(e.title)}${e.location ? `<small> · ${esc(e.location)}</small>` : ""}</span>${live ? `<span class="cal-now">now</span>` : ""}</a>`;
     })
     .join("");
-  const todo = open.length
-    ? `<div class="small muted" style="margin-top:8px">To-do: ${open.slice(0, 3).map((t) => esc(t.title)).join(" · ")}${open.length > 3 ? ` · +${open.length - 3}` : ""}</div>`
-    : "";
+  // The calendar's ledger: the same "counted tonight" its To-do tab shows and the review grades.
+  const L = a.tasks?.ledger;
+  const listUrl = `${esc(a.appUrl || CALENDAR_URL)}/#todo`;
+  const todo = L && Array.isArray(L.open)
+    ? L.counted
+      ? `<div class="small" style="margin-top:8px"><b>To-dos counted tonight: ${L.done.length} of ${L.counted} done.</b>${L.open.length ? ` <span class="muted">${L.open.slice(0, 3).map((t) => esc(t.title) + (t.why === "overdue" ? " (overdue)" : t.why === "pushed" ? " (pushed)" : "")).join(" · ")}${L.open.length > 3 ? ` · +${L.open.length - 3}` : ""}</span>` : ""} <a href="${listUrl}">To-do list →</a></div>`
+      : `<div class="small muted" style="margin-top:8px">No to-dos due today. <a href="${listUrl}">To-do list →</a></div>`
+    : open.length
+      ? `<div class="small muted" style="margin-top:8px">To-do: ${open.slice(0, 3).map((t) => esc(t.title)).join(" · ")}${open.length > 3 ? ` · +${open.length - 3}` : ""}</div>`
+      : "";
   return `<section class="card" id="cal-card">
     <h2>Today on your calendar <a class="right" href="${esc(a.appUrl || CALENDAR_URL)}/">Calendar →</a></h2>
     ${events.length ? `<div class="cal-list">${rows}</div>${events.length > 6 ? `<div class="small muted">+${events.length - 6} more</div>` : ""}` : `<div class="small muted">Nothing else scheduled today. Plan your study block wherever it fits.</div>`}

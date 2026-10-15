@@ -4,9 +4,23 @@
 // (calendarforarnav) to show next to your schedule. Same account, same
 // Supabase project, so the calendar's session token works here. Read-only.
 // Same origin as the calendar on the site; CORS allows CALENDAR_URL's origin otherwise.
+//
+// For the calendar's To-do tab it also returns:
+//   habits  { done, total, open: [names] } for today
+//   work    today's work day in local minutes { startMin, endMin, breaksMin }
+//           (2:32 PM school days / 9 AM weekends until the review hour), so
+//           its "does it fit" math matches halftime's
+//   grade   the day review's grade if the day ended now (gradeNow: the same
+//           facts and gradeDay as the 10 PM review), with parts per area.
+//           Uses the calendar's agenda (server-side, CALENDAR_SECRET); without
+//           it the grade covers Goals only and grade.calendar is false.
 
 import { config, missing, loadDay, json } from "./_lib/run.js";
 import { userFromToken } from "./_lib/supabase.js";
+import { fetchAgenda } from "./_lib/calendar.js";
+import { gradeNow } from "../js/review.js";
+import { workday, isSchoolDay } from "../js/schedule.js";
+import { BREAKS } from "../js/worktime.js";
 
 const originOf = (url) => {
   try {
@@ -52,7 +66,19 @@ export default async function handler(req, res) {
     const ctx = await loadDay(cfg, new Date(), user.id);
     if (ctx.problem) return json(res, 200, { problem: ctx.problem });
     const F = ctx.F;
+    const school = isSchoolDay(ctx.day);
+    const wd = workday(cfg, school);
+    const agenda = await fetchAgenda(cfg, ctx.day, { timeoutMs: 3000 });
+    let grade = null;
+    try {
+      grade = gradeNow(F, ctx.state, { agenda, cfg });
+    } catch (e) {
+      console.error("gradeNow:", e.message);
+    }
     return json(res, 200, {
+      habits: { done: F.habits.due.filter((x) => x.status === "full" || x.status === "min").length, total: F.habits.due.length, open: F.habits.open.map((x) => x.h.name) },
+      work: { startMin: wd.start, endMin: wd.end, breaksMin: school ? BREAKS.school : BREAKS.weekend },
+      grade,
       day: ctx.day,
       pct: F.pct,
       done: F.planDone.length,
