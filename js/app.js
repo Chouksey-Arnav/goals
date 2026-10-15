@@ -361,7 +361,9 @@ function viewToday() {
       <button class="btn sm primary" data-action="boost" ${Sync.status.email ? "" : "disabled"}>⚡ Send me motivation</button>
     </section>`;
 
-  return `<div class="view">${banners.join("")}${hero}${habitsTodayCard(F)}${calendarCard()}${lockCard}${nextCard}${ritualCard}${list}${boostCard}${rewardCard(F, complete)}${closeDayCard(F)}${aheadCard}${extraCard}${stats}</div>`;
+  // Order = what to do, in order: the ring, today's habits (one tap each),
+  // then exactly the next lesson. The calendar is context, so it comes after.
+  return `<div class="view">${banners.join("")}${hero}${habitsTodayCard(F)}${ritualCard}${lockCard}${nextCard}${calendarCard()}${list}${boostCard}${rewardCard(F, complete)}${closeDayCard(F)}${aheadCard}${extraCard}${stats}</div>`;
 }
 
 // ---------- today on the calendar (the calendar app, same account)
@@ -486,8 +488,13 @@ function closeDayCard(F) {
   const partnerBtns = state.contract.partners
     .map((p, i) => (p.name.trim() ? `<button class="btn sm ghost" data-action="report" data-i="${i}">📣 Check in with ${esc(p.name)}</button>` : ""))
     .join("");
+  // A 20-second evening ritual: folded to one line until it's time (7 PM,
+  // the day done, or you already started it), so it isn't in the way all day.
+  const started = log.closed || log.nsv || Object.keys(ci).length || Object.keys(todays).length;
+  const open = closeOpen[t] ?? (F.complete || new Date().getHours() >= 19 || !!started);
   return `<section class="card close-day ${log.closed ? "closed" : ""}" id="close">
-    <h2>Close the day ${lawChip(4)}</h2>
+    <details class="close-fold" data-day="${t}" ${open ? "open" : ""}>
+    <summary><h2>Close the day ${lawChip(4)} <span class="right">${log.closed ? "✓ closed" : open ? "20 seconds" : `tonight, after ${esc(s.stackAfter)}`}</span></h2></summary>
     <p class="intention stack">After <em>${esc(s.stackAfter)}</em>, I will <em>${esc(s.stackTrack)}</em>.</p>
     <p class="small faint" style="margin:4px 0 14px">Tracking stacked on a habit you already have. Lessons, minutes and the chain log themselves; this takes 20 seconds.</p>
     <div class="sub-h">How do you feel? <span class="faint">non-scale victories</span></div>
@@ -503,6 +510,7 @@ function closeDayCard(F) {
       <button class="btn ${log.closed ? "ghost" : "primary"}" data-action="close-day">${log.closed ? "✓ Day closed · update" : "Close the day"}</button>
       ${partnerBtns}
     </div>
+    </details>
   </section>`;
 }
 
@@ -672,10 +680,12 @@ function viewTracker() {
 
 // Sections you expanded or collapsed by hand stay that way across re-renders.
 const sectionOpen = {};
+const closeOpen = {}; // "Close the day", per day
 document.addEventListener(
   "toggle",
   (e) => {
     if (e.target.matches?.("details.section")) sectionOpen[e.target.dataset.key] = e.target.open;
+    if (e.target.matches?.("details.close-fold")) closeOpen[e.target.dataset.day] = e.target.open;
   },
   true
 );
@@ -1011,7 +1021,7 @@ function viewSystem() {
 function habitsTodayCard(F) {
   const H = F.habits;
   if (!H.list.length) {
-    return `<section class="card habit-empty"><div><b>Your daily habits</b><div class="small muted">Read Atomic Habits, your AP World History book, anything you want to do every day. Each one gets a time, a place, a two-minute version and an email when you do it.</div></div>
+    return `<section class="card habit-empty"><div><b>Your daily habits</b><div class="small muted">Read Atomic Habits, your AP World History book, anything you want to do every day. Each one gets a time, a place, a two-minute version and a chain.</div></div>
       <a class="btn sm primary" href="#habits/add">+ Add habits</a></section>`;
   }
   if (!H.due.length) {
@@ -1131,11 +1141,11 @@ function viewHabits() {
         <h2>This week <span class="right">week of ${fmtDate(DH.weekStart(t), { month: "short", day: "numeric" })}</span></h2>
         <div class="pbar"><div class="pbar-top"><span><b>${H.weekDone}</b> of ${H.weekScheduled} reps</span><span>${pct}%</span></div>
           <div class="track"><div class="fill-grad" style="width:${pct}%"></div></div></div>
-        <p class="small muted" style="margin:10px 0 0">Today: ${H.due.length ? `${H.done.length} of ${H.due.length} done.` : "nothing scheduled."} Every completion is emailed to you, and every Monday you get last week's scorecard.</p>
+        <p class="small muted" style="margin:10px 0 0">Today: ${H.due.length ? `${H.done.length} of ${H.due.length} done.` : "nothing scheduled."} Finish everything and you get one "Day complete" email; every Monday, last week's scorecard.</p>
       </section>`
     : `<section class="card"><h2>Your daily habits</h2>
         <p style="margin:0 0 8px">Put in the habits you want to keep up with. The app turns each one into a system:</p>
-        <ul class="ticks good"><li>A time and place, so you never decide "when" (Law 1)</li><li>An identity it votes for (Law 2)</li><li>A two-minute version for bad days that still counts (Law 3)</li><li>One tap to tick it, a chain, and an email every time you do it (Law 4)</li></ul>
+        <ul class="ticks good"><li>A time and place, so you never decide "when" (Law 1)</li><li>An identity it votes for (Law 2)</li><li>A two-minute version for bad days that still counts (Law 3)</li><li>One tap to tick it, a chain, and a week score (Law 4)</li></ul>
       </section>`;
   const last = H.lastWeek.length
     ? `<section class="card"><h2>Last week <span class="right">fix the weakest first</span></h2>
@@ -1320,14 +1330,16 @@ function syncCard() {
       <button class="btn primary block" data-action="verify-code">Sign in</button>
       <div class="btn-row" style="margin-top:10px"><button class="btn sm ghost" data-action="signin" data-resend="1">Send a new code</button><button class="btn sm ghost" data-action="signin-cancel">Use a different email</button></div>`;
   } else if (!st.email) {
-    body = `<p class="small muted" style="margin:0 0 12px">Sign in with your email to keep your phone and laptop in sync and to turn on your daily emails (they're built from your synced progress). You'll get a 6-digit code, no password.</p>
+    body = `<p class="small muted" style="margin:0 0 12px">Sign in with your email to keep your phone and laptop in sync and to turn on your daily emails (they're built from your synced progress). You'll get a 6-digit code, no password. It's one sign-in for the whole site: signed in to the Calendar on this browser means signed in here.</p>
       <div class="field"><label for="syncEmail">Email</label><input id="syncEmail" type="email" autocomplete="email" placeholder="you@gmail.com"/></div>
       <button class="btn primary block" data-action="signin">Email me a code</button>`;
   } else {
     const when = st.lastSync ? st.lastSync.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "not yet";
     body = `<p class="small" style="margin:0 0 12px"><span class="dot ${st.error ? "bad" : "good"}"></span> Synced as <b>${esc(st.email)}</b> · last sync ${when}</p>
-      <p class="small muted" style="margin:0 0 12px">📬 Emails go to this address: a morning plan, a midday check-in, an evening wrap, one for every lesson and habit you finish, one for every habit you create, and a weekly scorecard on Mondays. They only know what has synced, so tick things while signed in.</p>
-      <div class="btn-row"><button class="btn ghost" data-action="syncnow">Sync now</button><button class="btn ghost" data-action="signout">Sign out</button></div>`;
+      <p class="small muted" style="margin:0 0 12px">📬 Emails go to this address: a morning plan, when work starts, a halftime check, an evening wrap (skipped once the day is done), the day review, one for every habit you create, and a weekly scorecard on Mondays. They only know what has synced, so tick things while signed in.</p>
+      <label class="toggle" style="margin:0 0 12px"><input type="checkbox" data-setting="emailEachTick" ${state.settings.emailEachTick ? "checked" : ""}/>
+        <span><b>Email me every time I tick something</b><br/><span class="small muted">${state.settings.emailEachTick ? "On: one email per lesson and habit, about 10 more a day." : "Off: one \"Day complete\" email when everything is done. The app already celebrates each tick."}</span></span></label>
+      <div class="btn-row"><button class="btn ghost" data-action="syncnow">Sync now</button><button class="btn ghost" data-action="signout" title="Signs out of the Calendar too: one sign-in for the whole site">Sign out</button></div>`;
   }
   return `<section class="card" id="sync"><h2>Sign-in, sync and emails <span class="right">${st.enabled ? "Supabase" : "off"}</span></h2>
     ${st.error ? `<div class="banner bad" style="margin-bottom:12px"><span class="bi">⚠️</span><div>${esc(st.error)}</div></div>` : ""}${body}</section>`;
@@ -1835,7 +1847,7 @@ document.addEventListener("change", (e) => {
   if (!key) return;
   const s = state.settings;
   let rerender = false;
-  if (key === "includeOptional" || key === "sound") {
+  if (key === "includeOptional" || key === "sound" || key === "emailEachTick") {
     s[key] = el.checked;
     if (key === "sound") FX.setEnabled(el.checked);
   } else if (["weekdayMin", "weekendMin", "bufferDays", "jarTarget"].includes(key)) {
@@ -1856,7 +1868,10 @@ document.addEventListener("change", (e) => {
     s[key] = el.value.trim();
   }
   save();
-  toast("Saved. Plan updated.");
+  if (key === "emailEachTick") {
+    toast(el.checked ? "An email for every tick, from the next one." : "Quiet: one email when the whole day is done.");
+    rerender = true;
+  } else toast("Saved. Plan updated.");
   if (rerender) render();
 });
 
@@ -1977,6 +1992,8 @@ function bigCelebration(scale = 1) {
 function scrollToAnchor() {
   const { anchor } = route();
   const el = anchor && document.getElementById(anchor);
+  // A link straight to a folded card (e.g. #today/close) opens it.
+  el?.querySelector?.("details.close-fold:not([open])")?.setAttribute("open", "");
   if (el) el.scrollIntoView({ behavior: "instant", block: "start" });
   else scrollTo({ top: 0, behavior: "instant" });
 }
@@ -2014,8 +2031,9 @@ Sync.initSync({
   onPushed: notifyServer,
 });
 
-// Every tick, habit and new habit gets an email. After the sync that carries
-// it, ask the server to send whatever is new. It re-checks from the database
+// After the sync that carries a tick, habit or new habit, ask the server to
+// send whatever is now due (a new-habit plan, the day-complete email, the
+// midday email, or per-tick emails if you turned those on). It re-checks from the database
 // and sends each thing exactly once; the hourly cron catches anything this
 // misses (offline, closed tab), so a failed call is retried, never lost.
 let notifying = false;
@@ -2029,6 +2047,7 @@ function notifyServer() {
       if (!r) return void (failed = true);
       const slots = (r.sent || []).flatMap((x) => [].concat(x.slot));
       if (slots.some((x) => String(x).startsWith("new:"))) toast("📬 Your habit plan is in your inbox.");
+      else if (slots.includes("done:day")) toast("📬 Day complete. The recap is in your inbox.");
       else if (slots.includes("midday")) toast("📬 Check-in sent to your inbox.");
     })
     .finally(() => {

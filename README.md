@@ -2,7 +2,7 @@
 
 A daily accountability system built on *Atomic Habits*, live at **[www.arnavcalendar.online/goals](https://www.arnavcalendar.online/goals/)** (same site as the [calendar](https://www.arnavcalendar.online)). Two jobs, a graded check at halftime, and one honest verdict on both every night (see [Halftime](#halftime-are-you-through-half-the-list) and [End-of-day review](#end-of-day-review-groq)):
 
-1. **Your daily habits.** Reading *Atomic Habits*, your AP World History book, anything you want to do every day. You put them in; the app turns each one into a system and emails you when you create it, every time you do it, and every Monday with a scorecard.
+1. **Your daily habits.** Reading *Atomic Habits*, your AP World History book, anything you want to do every day. You put them in; the app turns each one into a system and emails you when you create it, once when the whole day is done, and every Monday with a scorecard.
 2. **Finish two Udemy courses by October 31, 2026**, on the way to AI Olympiad prep.
 
 | Course | Instructor | Tracked from |
@@ -29,12 +29,13 @@ This README is the project's single source of truth: what exists, why, and the r
 9. **Keep it simple to navigate.** Five tabs, no more. New things go inside an existing tab or under More.
 10. **Never commit secrets.** Server keys live in Vercel env vars only; `js/config.js` holds only the public publishable key.
 11. **Paths are relative.** Goals is served at `/goals/` on the calendar's domain, so the app calls `api/notify`, never `/api/notify` (that's the calendar's API). Assets are relative too. Server-to-server calls with a secret never go to a redirecting address (a redirect drops the `Authorization` header).
+12. **Don't nag.** An email or prompt has to change what you'd do next. Nothing emails you about something you just did in the app (the app already showed it), nothing asks the same question twice, and anything that only matters at one time of day stays folded until then. Per-tick emails exist, but only as an opt-in.
 
 ## Navigation
 
 | Tab | What's there |
 |---|---|
-| **Today** | Everything to do today, in order: warnings, the progress ring, your habits (one tap each), today on your calendar, the next lesson, the checklist, rewards and *Close the day*. |
+| **Today** | Everything to do today, in the order you do it: warnings, the progress ring, your habits (one tap each), the ritual (before you start), exactly the next lesson, then today on your calendar, the checklist, rewards and *Close the day* (folded to one line until 7 PM, the day is done, or you start it). |
 | **Habits** | Your daily habits: this week's score, each habit's chain and week, the two-minute version, add / edit / archive, last week's scorecard. |
 | **Courses** | Every lesson of both courses by section. Tick anything in any order. |
 | **Progress** | The chain heatmap, stats, savings jar, check-in trends, milestones. |
@@ -57,7 +58,7 @@ A **Calendar** link in the header goes back to the calendar (same site, same tab
 | One tap to tick, a chain, a week score, an email | 4 Satisfying | |
 
 - One-tap templates: *Read Atomic Habits* and *Read my AP World History book*. Every field stays editable.
-- **Ticking.** Today and Habits tabs: ✓ Done, or the two-minute version. Tap again to undo. Days in the current week can be filled in afterwards ("I read last night, forgot to tick"); those don't send an email.
+- **Ticking.** Today and Habits tabs: ✓ Done, or the two-minute version. Tap again to undo. Days in the current week can be filled in afterwards ("I read last night, forgot to tick"); those don't send an email. A tick sends no email of its own (unless you turn on every-tick emails); finishing everything on the day's list sends one.
 - **Streaks.** Consecutive days done. Days a habit isn't scheduled neither add nor break the chain; doing it anyway counts. Today never breaks it while it's still open.
 - **Never miss twice.** Missed last time → a red line under the habit (and in emails) pointing at the two-minute version.
 - **Week.** Monday to Sunday. Every Monday's email and the Habits tab show last week's score per habit and name the weakest one to fix (usually its time or place).
@@ -76,19 +77,20 @@ All sent with Nodemailer (Gmail, or Brevo from your own domain with Gmail as bac
 | **Morning plan** | 7:00 local. Lessons + today's habits + today's calendar (see [Calendar integration](#calendar-integration)). On course rest days or after the courses end: a habits-only morning email (if any are scheduled). |
 | **Work starts** (midday) | School days: **2:32 PM**, the moment you're home: "Work starts now: 9 lessons, ~2h 43m, one sitting. Phone in another room." Weekends: the moment the morning block is done, else 14:00. Either: the moment the whole day is done, if that's earlier. |
 | **Halftime** | **6:16 PM** school days, **3:30 PM** weekends. A grade for the first half: you should be through 50% of today's list. Free-time math, what's left, whether it still fits. See [Halftime](#halftime-are-you-through-half-the-list). Not sent if everything is already done. |
-| **Evening wrap** | 20:00 local (until the review hour). Lists habits still open. On course rest days: only if a habit is still open. |
+| **Evening wrap** | 20:00 local (until the review hour). Lists habits still open. On course rest days: only if a habit is still open. **Not sent once the whole day is done** (the review covers tonight). |
 | **Day review** | 22:00 local (`EMAIL_REVIEW_HOUR`). The whole day judged: lessons, habits, the calendar's to-dos and whether you had the time, a grade, what didn't happen, the pattern, three orders for tomorrow. Written by Groq from your record; see [End-of-day review](#end-of-day-review-groq). Not sent when there's nothing to judge. |
 | **Partner report** | Morning, to `PARTNER_EMAILS`, about yesterday (now including yesterday's habits). |
 | **Weekly kickoff** | Monday morning window: last week's habit scorecard, the weakest habit to fix, this week's plan. With no habits: a prompt to add them. |
-| **Done** | **Every lesson ticked and every habit done**, the moment it syncs. Things synced together (e.g. after being offline) share one email. If the same moment earns the midday email, the completions ride on it instead of sending two. |
+| **Day complete** | **Once, the moment everything on today's list is done**: the course plan (or the bad-day minimum) and every habit scheduled today (slot `done:day`). Ticks before that send nothing. If the same moment earns the midday email, it rides on that instead of sending two. |
+| **Done, per tick** (opt-in) | Only with *Email me every time I tick something* on (More → Sign-in and emails, `settings.emailEachTick`): every lesson ticked and every habit done, the moment it syncs. Things synced together share one email. |
 | **New habit** | **Every habit you create**: "Here's your habit. Let's make it real." Your implementation intention, the four laws applied to it, the two-minute version, never miss twice. |
 | **Send me motivation** | The Today button, on demand (max 1 a minute, 8 a day). |
 | **Sign-in code** | Signing in. |
 | **Failure alert** | A scheduled run fails (at most at 7:00, 14:00, 20:00, 22:00). |
 
-How *Done* and *New habit* are delivered: after every synced tick/habit/new habit the app calls `POST /api/notify`. The server checks the session is the owner's, re-reads progress, and emails whatever completed or was created **today** that has no `email_log` row yet (slots `done:<lesson id>`, `habit:<habit id>`, `new:<habit id>`). Every hourly cron run does the same check as a catch-up, so a dropped request (offline, tab closed) delays the email by at most an hour instead of losing it. Unticking and re-ticking never sends twice. Cap: 60 of these a day. Limit: a tick that only syncs after midnight is not emailed (it's no longer "today").
+How *Day complete*, *Done* and *New habit* are delivered: after every synced tick/habit/new habit the app calls `POST /api/notify`. The server checks the session is the owner's, re-reads progress, and decides. A habit created **today** with no `email_log` row gets its plan (`new:<habit id>`). In quiet mode (the default) ticks are left unclaimed until the whole day is done; then one email claims `done:day` plus every tick (`done:<lesson id>`, `habit:<habit id>`). In every-tick mode each completion with no row yet is emailed. Turning every-tick on mid-day emails the ticks that were waiting, once. Every hourly cron run does the same check as a catch-up, so a dropped request (offline, tab closed) delays the email by at most an hour instead of losing it. Unticking and re-ticking never sends twice. Cap: 60 of these a day. Limit: a tick that only syncs after midnight is not emailed (it's no longer "today").
 
-Volume check: a full day is about 6 daily emails + ~10 lessons + your habits ≈ 15 emails, each to you plus every `EMAIL_CC` address. Consumer Gmail allows roughly 500 recipients a day, so 15 emails × (1 + 15 copies) = 240 still fits, but if `EMAIL_CC` holds other people they will get every tick too. Keep `EMAIL_CC` to your own addresses.
+Volume check: a normal school day is now about 5 emails (morning, work starts, halftime, day complete or evening wrap, review), down from about 16 when every tick was emailed. With every-tick on it's about 6 + ~10 lessons + your habits ≈ 15, each to you plus every `EMAIL_CC` address; consumer Gmail allows roughly 500 recipients a day, so 15 × (1 + 15 copies) = 240 still fits. Keep `EMAIL_CC` to your own addresses.
 
 ## Halftime: are you through half the list?
 
@@ -253,7 +255,7 @@ Honest limits: the emails only know what has synced, so ticks on a signed-out de
 
 Goals and [Calendar](https://github.com/Chouksey-Arnav/calendarforarnav) share one site, one Supabase project and one account, so each can show the other.
 
-**One site.** Goals is at `https://www.arnavcalendar.online/goals/`: the calendar project's `vercel.json` rewrites `/goals/*` to this project's own address, `goals-taupe-six.vercel.app` (never redirect that one). `goalsforarnav.vercel.app` redirects its pages to `/goals/` (this repo's `vercel.json`; `/api/*` still answers there). Because the two apps are now the same origin, the Today card and the calendar's study card need no CORS. After the move, sign in once at the new address (your progress comes back from Supabase; tick nothing before signing in on a new address).
+**One site.** Goals is at `https://www.arnavcalendar.online/goals/`: the calendar project's `vercel.json` rewrites `/goals/*` to this project's own address, `goals-taupe-six.vercel.app` (never redirect that one). `goalsforarnav.vercel.app` redirects its pages to `/goals/` (this repo's `vercel.json`; `/api/*` still answers there). Because the two apps are now the same origin, the Today card and the calendar's study card need no CORS, and they share one sign-in (see [Data and sync](#data-and-sync)).
 
 - **Today tab:** a "Today on your calendar" card, right under your habits, lists today's events and open to-dos. It loads after the tab renders, from the calendar's `/api/agenda` with your session token, and hides itself if you're signed out or the calendar is unreachable.
 - **Morning email:** the same agenda appears after the checklist and habits, so the study plan is written around the rest of your day. It is in every kind of morning email: course days, rest days, the day the courses finish, and the habits-only morning email after that. The server fetches it with `CALENDAR_SECRET` (the calendar project's `CRON_SECRET`). If it's missing or the calendar is down, the email goes out without that section after at most 5 seconds.
@@ -279,7 +281,9 @@ The System tab lists what the two courses do **not** cover (PyTorch, CNNs, trans
 
 ## Data and sync
 
-Progress is saved in the browser first. Signing in (a 6-digit code by email) syncs it through Supabase so a phone and a laptop stay in step. Whichever copy was changed most recently wins.
+Progress is saved in the browser first. Signing in (a 6-digit code by email) syncs it through Supabase so a phone and a laptop stay in step. Whichever copy was changed most recently wins, except the **first sync of a device** with the account (`goals.syncedWith` in that browser's storage, not in the synced state): then the two copies are merged ([`mergeStates`](js/state.js), tested in `tests/sync.test.js`), so ticking on a new phone before signing in adds to your record instead of replacing it. Every lesson, habit tick, note, check-in and day log on either copy survives; on a conflict, and for settings, habit definitions and the contract, the synced copy wins.
+
+**One sign-in for the whole site.** Goals keeps its session under the calendar's storage key (`cal-auth`, same origin, same Supabase project), so signing in to either app signs you in to both, and signing out of either signs out both. Goals' old session (supabase-js's default key) is moved there once, never copied (two copies of one refresh token would sign one app out); if the calendar already had a session, that one wins. supabase-js locks token refreshes per storage key across tabs, so the apps never race for the token.
 
 Security model: table `public.progress` holds one JSON row per user. Row Level Security is on, and the only policies let a signed-in user read, insert and update **their own** row. Anonymous visitors have no grants at all. The publishable key in `js/config.js` is meant to be public. Tables `email_log` and `login_throttle` (see [`supabase/migrations`](supabase/migrations)) have RLS on, no policies and no grants, so only the server's secret key can touch them.
 
@@ -313,7 +317,7 @@ In [`supabase/migrations`](supabase/migrations), applied in order to the Supabas
 
 ```bash
 python3 -m http.server 8000   # then open http://localhost:8000
-npm test                      # planner, habits, schedule, email, halftime, review, focus guard and delivery tests (Node 20+)
+npm test                      # planner, habits, schedule, email, halftime, review, focus guard, sync and delivery tests (Node 20+)
 ```
 
 The site is static with no build step. The only dependency is Nodemailer, used by the five serverless routes in `api/` (`cron`, `notify`, `boost`, `login-code`, `today`). Vercel serves everything else as-is.
@@ -323,6 +327,15 @@ Built with help from Claude Code (AI).
 ## Changelog
 
 Newest first. Every change adds an entry here (see rule 1).
+
+### 2026-10-15 · Fewer emails, one sign-in, nothing lost on a new device
+- **One email when the day is done, not one per tick.** Ticks no longer email you (the app already celebrates each one); a single *Day complete* email (slot `done:day`, no migration: it fits the existing `done:*` pattern) goes out the moment every lesson and habit on today's list is done. Every-tick emails are an opt-in toggle under More → Sign-in and emails (`settings.emailEachTick`). A normal day drops from about 16 emails to about 5.
+- **The evening wrap stays silent once the whole day is done**; the review at 10 PM is tonight's one email.
+- **One sign-in for Calendar and Goals.** Goals now keeps its session under the calendar's key (`cal-auth`) on the shared origin, moving its old session over once. Sign in to either, you're in both.
+- **Fixed: a new device could wipe your progress.** Ticking anything before signing in made that device's copy "newest", so signing in replaced the whole synced record with it. The first sync of a device with the account now merges the two copies (`mergeStates`).
+- **Today, in the order you do it:** the next lesson now comes right after your habits (and the ritual), above the calendar card. *Close the day* is folded to one line until 7 PM, the day is done, or you start it.
+- Rule 12 (*Don't nag*) added.
+- Tests: 117 → 123.
 
 ### 2026-10-15 · Grading from the calendar's To-do tab
 - **The review and halftime grade calendar to-dos from the calendar's ledger** (`agenda.tasks.ledger`, calendarforarnav same date): the exact list its new To-do tab shows as "counted tonight". Fixes a double count (a to-do due today whose block was also skipped counted twice), and **pushing a to-do off today no longer makes the day look clean**: it stays counted and the review names it. Jot-and-tick within 5 minutes is reported, not counted. The review prompt lists pushing as a pattern to call out.

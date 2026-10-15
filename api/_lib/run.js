@@ -4,7 +4,7 @@ import { config, missing } from "./env.js";
 import * as DB from "./supabase.js";
 import { sendMail, explainMailError } from "./mailer.js";
 import { fetchAgenda } from "./calendar.js";
-import { dayFacts, zonedParts, reachedHalfway, BY_ID } from "../../js/digest.js";
+import { dayFacts, zonedParts, reachedHalfway, dayAllDone, BY_ID } from "../../js/digest.js";
 import { normalize } from "../../js/state.js";
 import { compose, composePartner, composeDone, composeHabitNew, composeWeekly } from "../../js/emails.js";
 import { completionEvents, newHabitEvents, isEventSlot } from "../../js/dailyhabits.js";
@@ -155,6 +155,8 @@ export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
   // Checked before fetching anything: the minute clock asks every minute.
   if (slot === "halftime" && !ctx.problem && !halftimeWorth(ctx.F)) return { slot, sent: false, reason: "everything is already done" };
   if (slot === "halftime" && ctx.problem) return { slot, sent: false, reason: ctx.problem };
+  // Nothing left to push: the review at the review hour is tonight's one email.
+  if (slot === "evening" && !ctx.problem && dayAllDone(ctx.F)) return { slot, sent: false, reason: "the whole day is done; the review covers tonight" };
   await withAgenda(cfg, ctx, slot);
   const mail = ctx.problem ? (slot === "morning" ? setupEmail(cfg, ctx.problem) : null) : buildEmail(cfg, slot, ctx);
   if (!mail) return { slot, sent: false, reason: ctx.problem || "nothing worth sending (rest day, before tracking, or finished)" };
@@ -185,21 +187,26 @@ export async function sendSlot(cfg, ctx, slot, { force = false } = {}) {
 
 // ---------- emails triggered by doing things
 //
-// Every lesson ticked today, every habit done today and every habit created
-// today gets an email, exactly once, decided from the database (never from
-// what the app claims). Called by POST /api/notify right after a sync, and
-// by every hourly cron run as a catch-up, so a dropped request costs at most
-// an hour, not the email.
+// Decided from the database (never from what the app claims), exactly once
+// each. Called by POST /api/notify right after a sync, and by every hourly
+// cron run as a catch-up, so a dropped request costs at most an hour, not
+// the email.
 //
 // - A new habit: its own "here's how to make it stick" email.
-// - Completions: one email for whatever finished since the last one (usually
-//   exactly one thing). If that same moment also earns the midday email
-//   (weekend morning block done, or the whole day done), the completions
-//   ride on the midday email instead of arriving as a second one.
+// - Completions, quiet mode (the default): no email per tick. One "Day
+//   complete" email (slot done:day) the moment every lesson and habit on
+//   today's list is done. Ticks stay unclaimed until then, so turning on
+//   every-tick mode mid-day still emails them.
+// - Completions, every-tick mode (settings.emailEachTick): one email for
+//   whatever finished since the last one (usually exactly one thing).
+// - Either way, if that same moment also earns the midday email (weekend
+//   morning block done, or the whole day done), the completions ride on the
+//   midday email instead of arriving as a second one.
 // - At most MAX_EVENT_ROWS completions/new habits a day, so a stuck client
 //   or a stolen session can't burn through Gmail's daily sending limit.
 
 export const MAX_EVENT_ROWS = 60;
+export const DAY_DONE_SLOT = "done:day";
 
 // io: { db, send } swaps the database and Gmail for tests.
 export async function sendEvents(cfg, ctx, { midday = true, io = { db: DB, send: sendMail } } = {}) {
@@ -217,20 +224,32 @@ export async function sendEvents(cfg, ctx, { midday = true, io = { db: DB, send:
     results.push(await sendClaimed(cfg, ctx.day, [ev.slot], composeHabitNew(ctx.F, ev.habit, mctx), addr, io));
   }
 
+  const quiet = !ctx.state?.settings?.emailEachTick;
   const pending = completionEvents(ctx.state, ctx.day, BY_ID)
     .filter((e) => !sent[e.slot])
-    .slice(0, MAX_EVENT_ROWS - used);
+    .slice(0, MAX_EVENT_ROWS - used - 1);
   const middayNow = midday && reachedHalfway(ctx.F) && nudgeAllowed(ctx.clock, sent, cfg);
-  if (!pending.length && !middayNow) return results;
+  const dayDoneNow = quiet && !sent[DAY_DONE_SLOT] && dayAllDone(ctx.F);
+  // Quiet: a tick alone sends nothing; it waits for the day to be done.
+  if (quiet ? !middayNow && !dayDoneNow : !pending.length && !middayNow) return results;
   // Claim first: whoever inserts the row sends. A racing run skips what it lost.
+  const dayDone = dayDoneNow && (await db.claimSlot(cfg, cfg.to, ctx.day, DAY_DONE_SLOT));
+  // Quiet mode with the day-done email lost to a racing run: that run sends it.
+  if (quiet && dayDoneNow && !dayDone && !middayNow) return results;
   const mine = [];
   for (const e of pending) if (await db.claimSlot(cfg, cfg.to, ctx.day, e.slot)) mine.push(e);
   const withMidday = middayNow && (await db.claimSlot(cfg, cfg.to, ctx.day, "midday"));
   const middayMail = withMidday ? buildEmail(cfg, "midday", ctx, { justDone: mine }) : null;
   if (withMidday && !middayMail) await db.releaseSlot(cfg, cfg.to, ctx.day, "midday").catch(() => {});
-  const mail = middayMail || composeDone(ctx.F, mine, mctx);
-  if (!mail) return results; // nothing claimed that needs sending
-  const slots = [...mine.map((e) => e.slot), ...(middayMail ? ["midday"] : [])];
+  const mail = middayMail || (dayDone ? composeDone(ctx.F, mine, { ...mctx, dayComplete: true }) : quiet ? null : composeDone(ctx.F, mine, mctx));
+  if (!mail) {
+    // Nothing to send after all (quiet mode, midday lost to a racing run):
+    // give the tick claims back so they wait for the day-done email.
+    for (const e of mine) await db.releaseSlot(cfg, cfg.to, ctx.day, e.slot).catch(() => {});
+    if (dayDone) await db.releaseSlot(cfg, cfg.to, ctx.day, DAY_DONE_SLOT).catch(() => {});
+    return results;
+  }
+  const slots = [...mine.map((e) => e.slot), ...(middayMail ? ["midday"] : []), ...(dayDone ? [DAY_DONE_SLOT] : [])];
   results.push(await sendClaimed(cfg, ctx.day, slots, mail, addr, io));
   return results;
 }

@@ -108,3 +108,14 @@ export function reachedHalfway(F) {
   if (F.mode === "min") return false;
   return !!F.sessions?.am.done;
 }
+
+// Everything on today's list is done: the course plan (or the bad-day
+// minimum) and every habit scheduled today. A day with nothing on it (rest
+// day, no habits) is never "all done": there was nothing to finish.
+// Quiet email mode sends one email at this moment instead of one per tick,
+// and the evening wrap stays silent once it's true (the review covers it).
+export function dayAllDone(F) {
+  const lessonsOk = F.complete || (F.planLessons.length === 0 && F.mode === "full");
+  const something = F.complete || F.habits.done.length > 0;
+  return lessonsOk && something && F.habits.open.length === 0;
+}

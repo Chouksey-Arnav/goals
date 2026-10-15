@@ -102,6 +102,7 @@ export default async function handler(req, res) {
         today: ctx.F ? { lessons: ctx.F.planLessons.length, done: ctx.F.planDone.length, pct: ctx.F.pct, streak: ctx.F.streak } : null,
         habits: ctx.F ? { live: ctx.F.habits.list.length, dueToday: ctx.F.habits.due.length, doneToday: ctx.F.habits.done.length } : null,
         eventEmails: ctx.F ? {
+          mode: ctx.state.settings.emailEachTick ? "every tick" : "quiet: one email when the whole day is done (pending ticks wait for it)",
           sentToday: Object.keys(sent).filter(isEventSlot).length,
           pending: [...newHabitEvents(ctx.state, ctx.day), ...completionEvents(ctx.state, ctx.day, BY_ID)].filter((e) => !sent[e.slot]).map((e) => e.slot),
         } : null,

@@ -28,6 +28,9 @@ export const DEFAULT_SETTINGS = {
   jarTarget: 100,
   currency: "$",
   sound: true,
+  // Off: one "Day complete" email when everything is done, none per tick.
+  // On: an email for every lesson and habit you finish (the server reads this).
+  emailEachTick: false,
 };
 
 export const DEFAULT_CONTRACT = {
@@ -81,4 +84,28 @@ export function normalize(s) {
   c.habits = Array.isArray(c.habits) ? c.habits : DEFAULT_CONTRACT.habits;
   s.contract = c;
   return s;
+}
+
+// The first sync of a device with an account. Without this, whichever copy
+// was touched last wins outright, so ticking one lesson on a new phone before
+// signing in would replace months of synced progress with that one tick.
+// Instead, the record of what you did is combined: every lesson ticked,
+// habit done, note, check-in and day log on either copy survives. Where both
+// copies say something about the same thing, the synced copy wins, and so do
+// its settings, habits' definitions and contract. Pure; the caller stamps
+// updatedAt.
+const UNION = ["completed", "tickAt", "notes", "actual", "penaltyPaid", "milestones", "celebrated", "history"];
+const BY_DAY = ["habitLog", "avoidLog", "dayLog", "checkins"];
+
+export function mergeStates(remote, local) {
+  const r = normalize(structuredClone(remote || {}));
+  const l = normalize(structuredClone(local || {}));
+  for (const k of UNION) r[k] = { ...l[k], ...r[k] };
+  for (const k of BY_DAY) {
+    const days = new Set([...Object.keys(l[k]), ...Object.keys(r[k])]);
+    r[k] = Object.fromEntries([...days].map((d) => [d, { ...(l[k][d] || {}), ...(r[k][d] || {}) }]));
+  }
+  const known = new Set(r.habits.map((h) => h.id));
+  r.habits = [...r.habits, ...l.habits.filter((h) => !known.has(h.id))];
+  return r;
 }
