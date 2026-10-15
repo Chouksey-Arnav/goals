@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fresh } from "../js/state.js";
 import { dayFacts } from "../js/digest.js";
-import { reviewFacts, gradeDay, checkReview, fallbackReview, composeReview, buildReviewMessages, REVIEW_SCHEMA } from "../js/review.js";
+import { reviewFacts, gradeDay, gradeNow, checkReview, fallbackReview, composeReview, buildReviewMessages, REVIEW_SCHEMA } from "../js/review.js";
+import { halftimeScore } from "../js/worktime.js";
 import { writeReview } from "../api/_lib/run.js";
 import { dueSlots } from "../js/schedule.js";
 
@@ -205,4 +206,62 @@ test("schedule: the review has its own window after the evening wrap", () => {
   assert.deepEqual(dueSlots(at(22), { ...sent, evening: {} }, CFG), ["review"]);
   assert.deepEqual(dueSlots(at(23), { ...sent, evening: {}, review: {} }, CFG), []);
   assert.deepEqual(dueSlots(at(22), sent, CFG), ["review"], "a late evening wrap is superseded by the review");
+});
+
+// ---------- the calendar's ledger (its To-do tab's "counted tonight")
+
+const LEDGER_AGENDA = {
+  ...AGENDA,
+  tasks: {
+    ...AGENDA.tasks,
+    ledger: {
+      done: [{ id: "d1", title: "Sign permission slip" }],
+      logged: [{ id: "l1", title: "Drink water" }],
+      open: [
+        { id: "o1", title: "History essay outline", why: "overdue", due: "2026-10-11", daysLate: 3, pushes: 2 },
+        { id: "o2", title: "Email Mr. Patel", why: "due", due: T, daysLate: 0, pushes: 0, skippedBlock: true, time: "5 PM" },
+        { id: "o3", title: "Return library book", why: "pushed", due: "2026-10-15", daysLate: 0, pushes: 1, pushedTo: "2026-10-15" },
+        { id: "o4", title: "Essay session 1/3", why: "block", due: "2026-10-18", daysLate: 0, pushes: 0, time: "7 PM" },
+      ],
+      counted: 5,
+      pct: 20,
+    },
+  },
+};
+
+test("ledger: each to-do counted once, pushes and skipped blocks named, logs not counted", () => {
+  const { s, F } = day({ lessons: 0, habit: undefined });
+  const { facts } = reviewFacts(F, s, { agenda: LEDGER_AGENDA });
+  const cal = facts.filter((f) => f.area === "calendar" && f.weight > 0);
+  assert.equal(cal.length, 5, "1 done + 4 open, no double count for a due to-do whose block was also skipped");
+  assert.ok(Math.abs(cal.reduce((a, f) => a + f.weight, 0) - 25) < 1e-9);
+  const text = facts.map((f) => f.text).join("\n");
+  assert.match(text, /Pushed off today's list instead of done: “Return library book”.*Moving it is not doing it\./);
+  assert.equal(facts.find((f) => /Return library book/.test(f.text)).flag, "pushed");
+  assert.match(text, /its 5 PM block was skipped: “Email Mr\. Patel”/);
+  assert.match(text, /History essay outline.*3 days late\)\. Pushed 2 times so far\./);
+  assert.match(text, /Jotted and ticked within minutes, so not counted: “Drink water”/);
+  assert.equal(facts.find((f) => /Drink water/.test(f.text)).status, "info");
+});
+
+test("ledger: halftime counts the same items (pushes included)", () => {
+  const { F } = day({ lessons: 0, habit: undefined });
+  const H = halftimeScore(F, LEDGER_AGENDA);
+  assert.equal(H.open.length, 4);
+  // Plain lists (an older calendar) still work.
+  assert.equal(halftimeScore(F, AGENDA).open.length, 2);
+});
+
+test("gradeNow: the review's own grade, with parts per area", () => {
+  const { s, F } = day({ lessons: 2, habit: "full" });
+  const g = gradeNow(F, s, { agenda: LEDGER_AGENDA });
+  const { facts } = reviewFacts(F, s, { agenda: LEDGER_AGENDA });
+  assert.equal(g.pct, gradeDay(facts).pct, "no second formula");
+  assert.equal(g.parts.calendar.done, 1);
+  assert.equal(g.parts.calendar.total, 5);
+  assert.equal(g.parts.calendar.pct, 20);
+  assert.deepEqual([g.parts.habits.done, g.parts.habits.total, g.parts.habits.pct], [1, 1, 100]);
+  assert.equal(g.parts.courses.done, 2);
+  assert.equal(g.calendar, true);
+  assert.equal(gradeNow(F, s, { agenda: null }).calendar, false);
 });

@@ -117,7 +117,25 @@ export function reviewFacts(F, state, { agenda = null, tomorrowAgenda = null, sy
   }
 
   // --- Calendar
-  if (agenda) {
+  // The calendar's ledger (its To-do tab's "counted tonight", one definition
+  // in calendarforarnav src/lib/todo.js): each to-do once, with why it counts.
+  // Older calendars without it: the lists below.
+  const L = agenda?.tasks?.ledger;
+  if (agenda && L && Array.isArray(L.open)) {
+    const items = L.done.length + L.open.length;
+    const each = items ? 25 / items : 0;
+    for (const x of L.done) add("calendar", "done", `To-do done: ${q(x.title)}.`, { weight: each, score: 1 });
+    for (const x of L.open) {
+      const pushed = x.pushes ? ` Pushed ${plural(x.pushes, "time")} so far.` : "";
+      if (x.why === "overdue") add("calendar", "missed", `Overdue to-do, still open: ${q(x.title)} (due ${x.due}, ${plural(x.daysLate, "day")} late).${pushed}`, { weight: each, score: 0 });
+      else if (x.why === "pushed") add("calendar", "missed", `Pushed off today's list instead of done: ${q(x.title)} (now due ${x.pushedTo}).${pushed} Moving it is not doing it.`, { weight: each, score: 0, flag: "pushed" });
+      else if (x.why === "block") add("calendar", "missed", `Planned work block skipped: ${q(x.title)} at ${x.time}. You picked that time yourself.`, { weight: each, score: 0 });
+      else if (x.skippedBlock) add("calendar", "missed", `To-do due today, not done, and its ${x.time} block was skipped: ${q(x.title)}. You picked that time yourself.${pushed}`, { weight: each, score: 0 });
+      else add("calendar", "missed", `To-do due today, not done: ${q(x.title)}.${pushed}`, { weight: each, score: 0 });
+    }
+    if (L.logged?.length) add("calendar", "info", `Jotted and ticked within minutes, so not counted: ${list(L.logged.map((x) => q(x.title)), 5)}. A log of something already done isn't a commitment kept.`);
+  }
+  if (agenda && !(L && Array.isArray(L.open))) {
     const done = agenda.tasks?.doneToday || [];
     const open = agenda.tasks?.open || [];
     const dueToday = open.filter((x) => x.due === t);
@@ -130,6 +148,9 @@ export function reviewFacts(F, state, { agenda = null, tomorrowAgenda = null, sy
     for (const x of dueToday) add("calendar", "missed", `To-do due today, not done: ${q(x.title)}.`, { weight: each, score: 0 });
     for (const x of overdue) add("calendar", "missed", `Overdue to-do, still open: ${q(x.title)} (due ${x.due}, ${plural(P.diffDays(x.due, t), "day")} late).`, { weight: each, score: 0 });
     for (const b of blocks) add("calendar", "missed", `Planned work block skipped: ${q(b.title)} at ${b.time}. You picked that time yourself.`, { weight: each, score: 0 });
+  }
+  if (agenda) {
+    const done = L && Array.isArray(L.done) ? L.done : agenda.tasks?.doneToday || [];
     const deadlines = (agenda.events || []).filter((e) => /^Due /.test(e.time || "") || /^Due:/.test(e.title || ""));
     for (const d of deadlines) add("calendar", "info", `Deadline today: ${q(d.title)} (${d.time}). The calendar can't tell whether you submitted it.`);
     const events = (agenda.events || []).filter((e) => !deadlines.includes(e));
@@ -195,6 +216,28 @@ export function gradeDay(facts) {
   return { pct, letter: letterFor(pct), capped: caps.map((c) => c[2]) };
 }
 
+// The grade "if the day ended now", for the calendar's To-do tab (via
+// /api/today). Same facts, same gradeDay(): one brain, no second formula.
+// parts: per area, how many of today's commitments are done, and the
+// area's score. null when there's nothing to grade yet.
+export function gradeNow(F, state, { agenda = null, cfg = null } = {}) {
+  const { facts } = reviewFacts(F, state, { agenda, cfg });
+  const g = gradeDay(facts);
+  if (!g) return null;
+  const parts = {};
+  for (const area of ["courses", "habits", "calendar"]) {
+    const xs = facts.filter((f) => f.area === area && Number.isFinite(f.weight) && f.weight > 0);
+    if (!xs.length) continue;
+    const w = xs.reduce((a, f) => a + f.weight, 0);
+    parts[area] = { pct: Math.round((xs.reduce((a, f) => a + f.weight * f.score, 0) / w) * 100) };
+  }
+  if (parts.courses) Object.assign(parts.courses, { done: F.planDone.length, total: F.planLessons.length });
+  if (parts.habits) Object.assign(parts.habits, { done: F.habits.due.filter((x) => x.status === "full" || x.status === "min").length, total: F.habits.due.length });
+  const L = agenda?.tasks?.ledger;
+  if (parts.calendar) Object.assign(parts.calendar, L && Array.isArray(L.open) ? { done: L.done.length, total: L.done.length + L.open.length } : { done: facts.filter((f) => f.area === "calendar" && f.status === "done").length, total: facts.filter((f) => f.area === "calendar" && f.weight > 0).length });
+  return { ...g, parts, calendar: !!agenda };
+}
+
 // ---------- 3. the prompt
 
 export const REVIEW_SCHEMA = {
@@ -236,7 +279,7 @@ Rules (break any and the review is thrown away):
 3. No praise padding and no comfort. Banned: "great job", "good job", "well done", "proud", "amazing", "awesome", "impressive", "nice work", "keep it up", "it's okay", "that's okay", "don't worry", "don't be too hard on yourself", "tomorrow is a new day", "every step counts", "progress is progress", "at least", "you've got this". No exclamation marks. No emojis.
 4. Acknowledge what was done in plain words, once, without adjectives. "You did all 4 lessons." Not "You crushed it."
 5. Name what wasn't done first and specifically. Name the cost: the chain, the pace to Oct 31, the contract penalty, the overdue days.
-6. Call out the pattern if the facts show one: lots of to-dos jotted but few done (planning instead of doing), fast ticks (ticking instead of learning), two-minute versions every day (minimums becoming the habit), bad-day mode, work blocks they scheduled themselves and then skipped, overdue items piling up, lessons ticked without writing the core idea. If there is no pattern, leave it empty. Do not invent one.
+6. Call out the pattern if the facts show one: lots of to-dos jotted but few done (planning instead of doing), fast ticks (ticking instead of learning), two-minute versions every day (minimums becoming the habit), bad-day mode, work blocks they scheduled themselves and then skipped, to-dos pushed off today's list instead of done (the calendar counts every push), overdue items piling up, lessons ticked without writing the core idea. If there is no pattern, leave it empty. Do not invent one.
 7. The time fact decides how hard you land. If the time fact is missed ("The time was there"), the misses were a choice, not bad luck: say it in those terms, with that fact's numbers. "You had the time. You chose something else." Make it the verdict's first sentence. Do not name what they did instead (YouTube or anything else): the record doesn't show it. If the time fact says the day was overbooked, say the plan was too big and the fix is the plan, while still naming what didn't get done. With no time fact, don't talk about free time at all.
 8. Short sentences. Second person ("you"). Direct, like a coach who respects them enough to tell the truth. Firm, not cruel: no sarcasm, no insults, no name-calling ("lazy", "pathetic", "loser"). Hard on the choices, never on the person.
 9. tomorrow: at most 3 orders, each a concrete action with a time and a first physical step. The first order starts at TOMORROW'S WORK START below: "2:32 PM: phone in another room, open 'Introduction to Numpy', press play. Nothing else until it's done." Not "Try to do better". Where it helps, one order removes the distraction in advance (YouTube blocked or closed until the lessons are done). Use tomorrow's calendar to place them. Cite the fact each order fixes, or null.

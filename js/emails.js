@@ -471,7 +471,7 @@ function halftime(F, ctx) {
   }
   if (F.habits.open.length) blocks.push(habitsBlock(F, "Habits still open"));
   if (H.open.length) {
-    const t = `To-dos due: ${H.open.slice(0, 5).map((x) => x.title + (x.overdue ? " (overdue)" : "")).join(" · ")}`;
+    const t = `To-dos due: ${H.open.slice(0, 5).map((x) => x.title + (x.overdue || x.why === "overdue" ? " (overdue)" : x.why === "pushed" ? " (pushed off today)" : "")).join(" · ")}`;
     blocks.push(para(t, { size: 14 }));
   }
   blocks.push(button("Back to it", `${ctx.appUrl}/#today`));
